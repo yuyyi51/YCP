@@ -65,7 +65,7 @@ func (server *Server) handlePacket(packet *packet.Packet, remoteAddr net.Addr) {
 	server.sessionMapMux.RUnlock()
 
 	server.sessionMapMux.Lock()
-	session = NewSession(server.listener, remoteAddr)
+	session = NewSession(server.listener, remoteAddr, packet.Conv)
 	server.sessionMap[packet.Conv] = session
 	server.sessionChan <- session
 	server.sessionMapMux.Unlock()

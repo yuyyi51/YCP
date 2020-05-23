@@ -111,8 +111,9 @@ func (sess *Session) String() string {
 	return fmt.Sprintf("[%d]%s,%s", sess.conv, sess.LocalAddr(), sess.RemoteAddr())
 }
 
-func NewSession(conn net.PacketConn, addr net.Addr) *Session {
+func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
 	session := &Session{
+		conv:            conv,
 		conn:            conn,
 		remoteAddr:      addr,
 		receivedPackets: make(chan *packet.Packet, 500),
@@ -168,6 +169,7 @@ func (sess *Session) sendData() {
 			size = canSend
 		}
 		dataFrame, remain := sess.popDataFrame(int(size), sess.nextDataOffset)
+		sess.nextDataOffset += uint64(len(dataFrame.Data))
 		pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
 		pkt.AddFrame(dataFrame)
 		sess.nextPktSeq++
@@ -257,13 +259,11 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 
 type dataManager struct {
 	minOffset uint64
-	ranges    []dataRange
 	rangeList *list.List
 }
 
 func newDataManager() *dataManager {
 	return &dataManager{
-		ranges:    make([]dataRange, 100),
 		rangeList: new(list.List),
 	}
 }
@@ -340,13 +340,16 @@ func (manager *ackManager) addAckRange(left, right uint64) {
 }
 
 func canMerge(range1, range2 ackRange) bool {
-	if range1.left < range2.left-1 && range1.right < range2.left-1 {
+	if range1.left < range2.left-1 && range1.right < range2.left-1 && range2.left != 0 {
 		// range1在range2的左侧
+		fmt.Printf("can not merge1 %s %s", range1, range2)
 		return false
-	} else if range2.left < range1.left-1 && range2.right < range1.left-1 {
+	} else if range2.left < range1.left-1 && range2.right < range1.left-1 && range1.left != 0 {
 		// range2在range1的左侧
+		fmt.Printf("can not merge2 %s %s", range1, range2)
 		return false
 	}
+	fmt.Printf("can merge %s %s", range1, range2)
 	return true
 }
 
