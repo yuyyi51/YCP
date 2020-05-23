@@ -12,6 +12,10 @@ type DataFrame struct {
 	Data   []byte
 }
 
+func (f DataFrame) IsRetransmittable() bool {
+	return true
+}
+
 func (f DataFrame) String() string {
 	return fmt.Sprintf("%s | Offset: %d, len: %d,  Data: 0x%s", f.BaseFrame.String(), f.Offset, len(f.Data), hex.EncodeToString(f.Data))
 }

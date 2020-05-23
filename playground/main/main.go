@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"code.int-2.me/yuyyi51/YCP"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 )
 
 func main() {
-	Entrance()
+	Entrance2()
 }
 func server(host string, port int, wq *sync.WaitGroup) {
 	address := fmt.Sprintf("%s:%d", host, port)
@@ -28,6 +32,16 @@ func server(host string, port int, wq *sync.WaitGroup) {
 		_, _ = session.Write(data)
 	}*/
 	_ = session
+	for {
+		buffer := make([]byte, 1000)
+		n, _ := session.Read(buffer)
+		if n != 0 {
+			fmt.Println("reading data")
+			fmt.Println(hex.EncodeToString(buffer[:n]))
+		}
+		time.Sleep(time.Second * 1)
+	}
+
 	wq.Wait()
 }
 func CreateUdpConn(remoteHost string, remotePort int) (conn net.Conn, err error) {
@@ -49,7 +63,7 @@ func client(host string, port int) {
 		os.Exit(1)
 	}
 	for i := 0; i < 200; i++ {
-		fmt.Println(i)
+		//fmt.Println(i)
 		data := make([]byte, 0)
 		for j := 0; j < 100; j++ {
 			data = append(data, byte(j))
@@ -92,6 +106,63 @@ func client(host string, port int) {
 		}
 		fmt.Println("client exit")
 	*/
+}
+
+func Entrance2() {
+	fmt.Println("input mode(0:server|1:client), host and port")
+	s := bufio.NewScanner(os.Stdin)
+	s.Scan()
+	mode := s.Text()
+	s.Scan()
+	host := s.Text()
+	s.Scan()
+	port := s.Text()
+	portn, _ := strconv.ParseInt(port, 10, 32)
+	if mode == "0" {
+		address := fmt.Sprintf("%s:%s", host, port)
+		server := YCP.NewServer(address)
+		err := server.Listen()
+		if err != nil {
+			fmt.Printf("%v\n", err)
+		}
+		session := server.Accept()
+		go func() {
+			for {
+				buffer := make([]byte, 1000)
+				n, _ := session.Read(buffer)
+				if n != 0 {
+					fmt.Printf("%s\n", buffer)
+				}
+				time.Sleep(time.Millisecond * 500)
+			}
+		}()
+		for {
+			s.Scan()
+			message := s.Text()
+			_, _ = session.Write([]byte(message))
+		}
+	} else {
+		session, err := YCP.Dial(host, int(portn))
+		if err != nil {
+			fmt.Printf("client dial error: %v", err)
+			os.Exit(1)
+		}
+		go func() {
+			for {
+				buffer := make([]byte, 1000)
+				n, _ := session.Read(buffer)
+				if n != 0 {
+					fmt.Printf("%s\n", buffer)
+				}
+				time.Sleep(time.Millisecond * 500)
+			}
+		}()
+		for {
+			s.Scan()
+			message := s.Text()
+			_, _ = session.Write([]byte(message))
+		}
+	}
 }
 
 func Entrance() {

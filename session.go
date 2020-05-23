@@ -2,6 +2,7 @@ package YCP
 
 import (
 	"bytes"
+	"code.int-2.me/yuyyi51/YCP/internal"
 	"code.int-2.me/yuyyi51/YCP/packet"
 	"container/list"
 	"fmt"
@@ -23,7 +24,7 @@ type Session struct {
 	writingMux     *sync.RWMutex
 	writeSignal    chan struct{}
 
-	dataManager *dataManager
+	dataManager *internal.DataManager
 	ackManager  *ackManager
 	closeSignal chan struct{}
 	dataSignal  chan struct{}
@@ -33,14 +34,43 @@ type Session struct {
 	bytesInFlight  uint64
 	nextPktSeq     uint64
 	nextDataOffset uint64
+
+	dataBuffer []byte
 }
 
 func (sess *Session) Read(b []byte) (n int, err error) {
-	panic("implement me")
+	remain := len(b)
+	offset := 0
+	if len(sess.dataBuffer) != 0 {
+		if len(b) >= len(sess.dataBuffer) {
+			copy(b, sess.dataBuffer)
+			remain -= len(sess.dataBuffer)
+			offset += len(sess.dataBuffer)
+			sess.dataBuffer = nil
+		} else {
+			copy(b, sess.dataBuffer[:len(b)])
+			sess.dataBuffer = sess.dataBuffer[len(b):]
+			return len(b), nil
+		}
+	}
+	if remain == 0 {
+		return len(b), nil
+	}
+	data := sess.dataManager.PopData()
+	//fmt.Printf("pop data, len %d\n%s\n", len(data), hex.EncodeToString(data))
+	if remain >= len(data) {
+		copy(b[offset:], data)
+		offset += len(data)
+	} else {
+		copy(b[offset:], data[:remain])
+		sess.dataBuffer = data[remain:]
+		offset += remain
+	}
+	return offset, nil
 }
 
 func (sess *Session) Write(b []byte) (n int, err error) {
-	fmt.Printf("start Write, len %d\n", len(b))
+	//fmt.Printf("start Write, len %d\n", len(b))
 	sess.writingMux.Lock()
 	defer sess.writingMux.Unlock()
 
@@ -51,7 +81,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		sess.writeBufferLen += len(b)
 		sess.SignalData()
 		sess.sessMux.Unlock()
-		fmt.Printf("finish Write\n")
+		//fmt.Printf("finish Write\n")
 		return len(b), nil
 	}
 	n = 0
@@ -79,7 +109,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		sess.sessMux.Lock()
 	}
 	sess.sessMux.Unlock()
-	fmt.Printf("finish Write\n")
+	//fmt.Printf("finish Write\n")
 	return
 }
 
@@ -117,7 +147,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
 		conn:            conn,
 		remoteAddr:      addr,
 		receivedPackets: make(chan *packet.Packet, 500),
-		dataManager:     newDataManager(),
+		dataManager:     internal.NewDataManager(),
 		ackManager:      newAckManager(),
 		sessMux:         new(sync.RWMutex),
 		writeBuffer:     make([]byte, packet.SessionWriteBufferSize),
@@ -138,11 +168,11 @@ func (sess *Session) run() {
 		case pkt := <-sess.receivedPackets:
 			sess.handlePacket(pkt)
 		case <-sess.dataSignal:
-			fmt.Printf("dataSignal fired\n")
+			//fmt.Printf("dataSignal fired\n")
 			sess.sendData()
 			sendTimer.Reset(packet.SessionSendInterval)
 		case <-sendTimer.C:
-			fmt.Printf("sendTimer fired\n")
+			//fmt.Printf("sendTimer fired\n")
 			sess.sendData()
 			sendTimer.Reset(packet.SessionSendInterval)
 		case <-sess.closeSignal:
@@ -158,12 +188,12 @@ func (sess *Session) sendData() {
 		return
 	}
 	canSend := cwd - sess.bytesInFlight
-	if !sess.haveData() {
-		fmt.Println("sendData exit for have no data")
+	if !sess.haveDataToSend() {
+		//fmt.Println("sendData exit for have no data")
 		return
 	}
 	packets := make([]PacketInfo, 0)
-	for canSend > 0 {
+	for canSend > 0 && sess.haveDataToSend() {
 		size := uint64(packet.MaxDataFrameDataSize)
 		if canSend < size {
 			size = canSend
@@ -184,16 +214,16 @@ func (sess *Session) sendData() {
 		}
 		canSend -= size
 		if remain == 0 {
-			fmt.Println("sendData exit for remain no more data")
+			//fmt.Println("sendData exit for remain no more data")
 		}
 	}
 	sess.congestion.OnPacketsSend(packets)
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
-	fmt.Printf("handle pakcet %s\n", packet.String())
+	//fmt.Printf("handle pakcet %s\n", packet.String())
 	sess.ackManager.addAckRange(packet.Seq, packet.Seq)
-	fmt.Println(sess.ackManager.printAckRanges())
+	//fmt.Println(sess.ackManager.printAckRanges())
 	for _, frame := range packet.Frames {
 		sess.handleFrame(frame)
 	}
@@ -206,11 +236,12 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		if !ok {
 			return fmt.Errorf("convert Frame to DataFrame eror")
 		}
-		dataRange := dataRange{
-			offset: dataFrame.Offset,
-			data:   dataFrame.Data,
+		if len(dataFrame.Data) == 0 {
+			fmt.Printf("droped dataFrame for have no data\n")
+			break
 		}
-		_ = dataRange
+		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data)
+		//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
 	}
 	return nil
 }
@@ -229,7 +260,7 @@ func (sess *Session) SignalData() {
 	}
 }
 
-func (sess *Session) haveData() bool {
+func (sess *Session) haveDataToSend() bool {
 	sess.sessMux.Lock()
 	defer sess.sessMux.Unlock()
 	return sess.writeBufferLen > 0
@@ -255,23 +286,6 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	fmt.Printf("%s send packet seq: %d, size: %d\n", sess, p.Seq, p.Size())
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
 	return err
-}
-
-type dataManager struct {
-	minOffset uint64
-	rangeList *list.List
-}
-
-func newDataManager() *dataManager {
-	return &dataManager{
-		rangeList: new(list.List),
-	}
-}
-
-type dataRange struct {
-	offset uint64
-	size   uint64
-	data   []byte
 }
 
 type ackManager struct {
@@ -325,13 +339,13 @@ func (manager *ackManager) addAckRange(left, right uint64) {
 				continue
 			} else {
 				manager.rangeList.InsertBefore(currentRange, cur)
-				fmt.Printf("insert range %s\n", currentRange)
+				//fmt.Printf("insert range %s\n", currentRange)
 				break
 			}
 		}
 		currentRange = merge(currentRange, cur.Value.(ackRange))
 		manager.rangeList.Remove(cur)
-		fmt.Printf("removed range %s\n", cur.Value.(ackRange))
+		//fmt.Printf("removed range %s\n", cur.Value.(ackRange))
 		startMerge = true
 	}
 	if cur == nil {
@@ -342,14 +356,11 @@ func (manager *ackManager) addAckRange(left, right uint64) {
 func canMerge(range1, range2 ackRange) bool {
 	if range1.left < range2.left-1 && range1.right < range2.left-1 && range2.left != 0 {
 		// range1在range2的左侧
-		fmt.Printf("can not merge1 %s %s", range1, range2)
 		return false
 	} else if range2.left < range1.left-1 && range2.right < range1.left-1 && range1.left != 0 {
 		// range2在range1的左侧
-		fmt.Printf("can not merge2 %s %s", range1, range2)
 		return false
 	}
-	fmt.Printf("can merge %s %s", range1, range2)
 	return true
 }
 

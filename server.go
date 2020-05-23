@@ -47,7 +47,7 @@ func (server *Server) run() {
 			fmt.Printf("server read error, %v\n", err)
 			break
 		}
-		fmt.Printf("server read Packet from %s, length [%d]\n", addr, n)
+		//fmt.Printf("server read Packet from %s, length [%d]\n", addr, n)
 		p, _ := packet.Unpack(buffer[:n])
 		server.handlePacket(p, addr)
 	}

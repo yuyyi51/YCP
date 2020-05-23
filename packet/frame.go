@@ -18,12 +18,17 @@ type Frame interface {
 	Serialize() []byte
 	Command() uint8
 	Size() int
+	IsRetransmittable() bool
 }
 
 type BaseFrame struct {
 	command uint8
 	size    uint16
 	raw     []byte
+}
+
+func (f BaseFrame) IsRetransmittable() bool {
+	panic("implement me")
 }
 
 func (f BaseFrame) String() string {

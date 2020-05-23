@@ -82,3 +82,11 @@ func (p *Packet) Size() int {
 	}
 	return size
 }
+
+func (p *Packet) IsRetransmittable() bool {
+	retransmittable := false
+	for _, frame := range p.Frames {
+		retransmittable = frame.IsRetransmittable() || retransmittable
+	}
+	return retransmittable
+}
