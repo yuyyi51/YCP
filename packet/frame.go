@@ -5,9 +5,12 @@ import (
 )
 
 const (
-	FrameHeaderSize      = 3
-	DataFrameHeaderSize  = FrameHeaderSize + 8
-	MaxDataFrameDataSize = Ipv4PayloadSize - DataFrameHeaderSize
+	FrameHeaderSize       = 3
+	DataFrameHeaderSize   = FrameHeaderSize + 8
+	AckFrameHeaderSize    = FrameHeaderSize + 1
+	MaxDataFrameDataSize  = Ipv4PayloadSize - DataFrameHeaderSize
+	MaxAckFrameDataSize   = Ipv4PayloadSize - AckFrameHeaderSize
+	MaxAckFrameRangeCount = 100
 
 	DataFrameCommand = 1
 	AckFrameCommand  = 2

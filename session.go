@@ -197,6 +197,16 @@ func (sess *Session) run() {
 	}
 }
 
+func (sess *Session) createAckFrame() packet.AckFrame {
+	maxRangeCount := packet.MaxAckFrameDataSize / 16
+	if maxRangeCount > packet.MaxAckFrameRangeCount {
+		maxRangeCount = packet.MaxAckFrameRangeCount
+	}
+	ranges := sess.ackManager.queueAckRanges(maxRangeCount)
+	ackFrame := packet.CreateAckFrame(ranges)
+	return ackFrame
+}
+
 func (sess *Session) sendData() {
 	// 能发送多少数据
 	cwd := sess.congestion.GetCongestionWindow()
@@ -321,15 +331,6 @@ type ackManager struct {
 	rangeList *list.List
 }
 
-type ackRange struct {
-	left  uint64
-	right uint64
-}
-
-func (ran ackRange) String() string {
-	return fmt.Sprintf("[%d,%d]", ran.left, ran.right)
-}
-
 func newAckManager() *ackManager {
 	return &ackManager{
 		rangeList: list.New(),
@@ -339,31 +340,44 @@ func newAckManager() *ackManager {
 func (manager *ackManager) printAckRanges() string {
 	buffer := bytes.Buffer{}
 	for cur := manager.rangeList.Front(); cur != nil; cur = cur.Next() {
-		buffer.WriteString(fmt.Sprintf("%s ", cur.Value.(ackRange)))
+		buffer.WriteString(fmt.Sprintf("%s ", cur.Value.(packet.AckRange)))
 	}
 	return buffer.String()
 }
 
+func (manager *ackManager) queueAckRanges(maxCount int) []packet.AckRange {
+	last := manager.rangeList.Back()
+	ranges := make([]packet.AckRange, 0, maxCount)
+	for last != nil {
+		if len(ranges) >= maxCount {
+			break
+		}
+		ranges = append(ranges, last.Value.(packet.AckRange))
+		last = last.Prev()
+	}
+	return ranges
+}
+
 func (manager *ackManager) addAckRange(left, right uint64) {
 	if manager.rangeList.Back() == nil {
-		ran := ackRange{
-			left:  left,
-			right: right,
+		ran := packet.AckRange{
+			Left:  left,
+			Right: right,
 		}
 		manager.rangeList.PushBack(ran)
 		return
 	}
 	head := manager.rangeList.Front()
-	currentRange := ackRange{
-		left:  left,
-		right: right,
+	currentRange := packet.AckRange{
+		Left:  left,
+		Right: right,
 	}
 	startMerge := false
 	cur := head
 	ccur := head
 	for ; cur != nil; cur = ccur {
 		ccur = cur.Next()
-		if !canMerge(cur.Value.(ackRange), currentRange) {
+		if !CanMerge(cur.Value.(packet.AckRange), currentRange) {
 			if !startMerge {
 				continue
 			} else {
@@ -372,9 +386,9 @@ func (manager *ackManager) addAckRange(left, right uint64) {
 				break
 			}
 		}
-		currentRange = merge(currentRange, cur.Value.(ackRange))
+		currentRange = Merge(currentRange, cur.Value.(packet.AckRange))
 		manager.rangeList.Remove(cur)
-		//fmt.Printf("removed range %s\n", cur.Value.(ackRange))
+		//fmt.Printf("removed range %s\n", cur.Value.(AckRange))
 		startMerge = true
 	}
 	if cur == nil {
@@ -382,21 +396,21 @@ func (manager *ackManager) addAckRange(left, right uint64) {
 	}
 }
 
-func canMerge(range1, range2 ackRange) bool {
-	if range1.left < range2.left-1 && range1.right < range2.left-1 && range2.left != 0 {
+func CanMerge(range1, range2 packet.AckRange) bool {
+	if range1.Left < range2.Left-1 && range1.Right < range2.Left-1 && range2.Left != 0 {
 		// range1在range2的左侧
 		return false
-	} else if range2.left < range1.left-1 && range2.right < range1.left-1 && range1.left != 0 {
+	} else if range2.Left < range1.Left-1 && range2.Right < range1.Left-1 && range1.Left != 0 {
 		// range2在range1的左侧
 		return false
 	}
 	return true
 }
 
-func merge(range1, range2 ackRange) ackRange {
-	merged := ackRange{}
-	merged.left = min(range1.left, range2.left)
-	merged.right = max(range1.right, range2.right)
+func Merge(range1, range2 packet.AckRange) packet.AckRange {
+	merged := packet.AckRange{}
+	merged.Left = min(range1.Left, range2.Left)
+	merged.Right = max(range1.Right, range2.Right)
 	return merged
 }
 
