@@ -65,7 +65,7 @@ func (f BaseFrame) Deserialize() Frame {
 	case DataFrameCommand:
 		return DeserializeDataFrame(f)
 	case AckFrameCommand:
-
+		return DeserializeAckFrame(f)
 	}
 	return nil
 }

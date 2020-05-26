@@ -204,6 +204,7 @@ func (sess *Session) createAckFrame() packet.AckFrame {
 	}
 	ranges := sess.ackManager.queueAckRanges(maxRangeCount)
 	ackFrame := packet.CreateAckFrame(ranges)
+	fmt.Printf("sending ack frame %s\n", ackFrame)
 	return ackFrame
 }
 
@@ -220,15 +221,27 @@ func (sess *Session) sendData() {
 		return
 	}
 	packets := make([]PacketInfo, 0)
+	sentAck := false
 	for canSend > 0 && sess.haveDataToSend() {
+		pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
+		if !sentAck {
+			sentAck = true
+			ackFrame := sess.createAckFrame()
+			pkt.AddFrame(ackFrame)
+			if canSend < uint64(ackFrame.Size()) {
+				canSend = 0
+			}
+		}
 		size := uint64(packet.MaxDataFrameDataSize)
 		if canSend < size {
 			size = canSend
 		}
-		dataFrame, remain := sess.popDataFrame(int(size), sess.nextDataOffset)
-		sess.nextDataOffset += uint64(len(dataFrame.Data))
-		pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
-		pkt.AddFrame(dataFrame)
+		if size != 0 {
+			dataFrame, _ := sess.popDataFrame(int(size), sess.nextDataOffset)
+			sess.nextDataOffset += uint64(len(dataFrame.Data))
+			pkt.AddFrame(dataFrame)
+		}
+
 		sess.nextPktSeq++
 		pktInfo := PacketInfo{
 			seq:  pkt.Seq,
@@ -240,9 +253,6 @@ func (sess *Session) sendData() {
 			fmt.Printf("send packet error: %v", err)
 		}
 		canSend -= size
-		if remain == 0 {
-			//fmt.Println("sendData exit for remain no more data")
-		}
 	}
 	sess.congestion.OnPacketsSend(packets)
 	fmt.Printf("cwd: %d, inFlight: %d\n", cwd, sess.bytesInFlight)
@@ -262,7 +272,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 	case packet.DataFrameCommand:
 		dataFrame, ok := frame.(packet.DataFrame)
 		if !ok {
-			return fmt.Errorf("convert Frame to DataFrame eror")
+			return fmt.Errorf("convert Frame to DataFrame error")
 		}
 		if len(dataFrame.Data) == 0 {
 			fmt.Printf("droped dataFrame for have no data\n")
@@ -270,7 +280,17 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		}
 		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data)
 		sess.SignalRead()
-		//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
+	//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
+	case packet.AckFrameCommand:
+		ackFrame, ok := frame.(packet.AckFrame)
+		if !ok {
+			return fmt.Errorf("convert Frame to AckFrame error")
+		}
+		if ackFrame.RangeCount == 0 || len(ackFrame.AckRanges) == 0 {
+			fmt.Printf("droped ackFrame for have no range\n")
+			break
+		}
+		fmt.Printf("receive ackFrame: %s\n", ackFrame)
 	}
 	return nil
 }
