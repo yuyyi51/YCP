@@ -129,16 +129,17 @@ func Entrance2() {
 		go func() {
 			for {
 				buffer := make([]byte, 1000)
+				fmt.Printf("reading data\n")
 				n, _ := session.Read(buffer)
 				if n != 0 {
 					fmt.Printf("%s\n", buffer)
 				}
-				time.Sleep(time.Millisecond * 500)
 			}
 		}()
 		for {
 			s.Scan()
 			message := s.Text()
+			fmt.Printf("get input\n")
 			_, _ = session.Write([]byte(message))
 		}
 	} else {
@@ -150,16 +151,17 @@ func Entrance2() {
 		go func() {
 			for {
 				buffer := make([]byte, 1000)
+				fmt.Printf("reading data\n")
 				n, _ := session.Read(buffer)
 				if n != 0 {
 					fmt.Printf("%s\n", buffer)
 				}
-				time.Sleep(time.Millisecond * 500)
 			}
 		}()
 		for {
 			s.Scan()
 			message := s.Text()
+			fmt.Printf("get input\n")
 			_, _ = session.Write([]byte(message))
 		}
 	}

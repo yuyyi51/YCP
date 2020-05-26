@@ -24,6 +24,10 @@ type Session struct {
 	writingMux     *sync.RWMutex
 	writeSignal    chan struct{}
 
+	dataBuffer []byte
+	readingMux *sync.RWMutex
+	readSignal chan struct{}
+
 	dataManager *internal.DataManager
 	ackManager  *ackManager
 	closeSignal chan struct{}
@@ -34,11 +38,11 @@ type Session struct {
 	bytesInFlight  uint64
 	nextPktSeq     uint64
 	nextDataOffset uint64
-
-	dataBuffer []byte
 }
 
 func (sess *Session) Read(b []byte) (n int, err error) {
+	sess.readingMux.Lock()
+	defer sess.readingMux.Unlock()
 	remain := len(b)
 	offset := 0
 	if len(sess.dataBuffer) != 0 {
@@ -56,15 +60,26 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 	if remain == 0 {
 		return len(b), nil
 	}
-	data := sess.dataManager.PopData()
-	//fmt.Printf("pop data, len %d\n%s\n", len(data), hex.EncodeToString(data))
-	if remain >= len(data) {
-		copy(b[offset:], data)
-		offset += len(data)
-	} else {
-		copy(b[offset:], data[:remain])
-		sess.dataBuffer = data[remain:]
-		offset += remain
+	for {
+		data := sess.dataManager.PopData()
+		//fmt.Printf("pop data, len %d\n%s\n", len(data), hex.EncodeToString(data))
+		if remain >= len(data) {
+			copy(b[offset:], data)
+			offset += len(data)
+		} else {
+			copy(b[offset:], data[:remain])
+			sess.dataBuffer = data[remain:]
+			offset += remain
+			break
+		}
+		if offset == 0 {
+			// no data
+			select {
+			case <-sess.readSignal:
+			}
+		} else {
+			break
+		}
 	}
 	return offset, nil
 }
@@ -155,7 +170,9 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
 		writeSignal:     make(chan struct{}),
 		closeSignal:     make(chan struct{}),
 		dataSignal:      make(chan struct{}),
+		readSignal:      make(chan struct{}),
 		congestion:      NewRenoAlgorithm(),
+		readingMux:      new(sync.RWMutex),
 	}
 	go session.run()
 	return session
@@ -167,10 +184,10 @@ func (sess *Session) run() {
 		select {
 		case pkt := <-sess.receivedPackets:
 			sess.handlePacket(pkt)
-		case <-sess.dataSignal:
-			//fmt.Printf("dataSignal fired\n")
-			sess.sendData()
-			sendTimer.Reset(packet.SessionSendInterval)
+		//case <-sess.dataSignal:
+		//	//fmt.Printf("dataSignal fired\n")
+		//	sess.sendData()
+		//	sendTimer.Reset(packet.SessionSendInterval)
 		case <-sendTimer.C:
 			//fmt.Printf("sendTimer fired\n")
 			sess.sendData()
@@ -218,6 +235,7 @@ func (sess *Session) sendData() {
 		}
 	}
 	sess.congestion.OnPacketsSend(packets)
+	fmt.Printf("cwd: %d, inFlight: %d\n", cwd, sess.bytesInFlight)
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
@@ -241,6 +259,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			break
 		}
 		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data)
+		sess.SignalRead()
 		//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
 	}
 	return nil
@@ -256,6 +275,13 @@ func (sess *Session) SignalWrite() {
 func (sess *Session) SignalData() {
 	select {
 	case sess.dataSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (sess *Session) SignalRead() {
+	select {
+	case sess.readSignal <- struct{}{}:
 	default:
 	}
 }
@@ -285,6 +311,9 @@ func (sess *Session) popDataFrame(size int, offset uint64) (packet.DataFrame, in
 func (sess *Session) sendPacket(p packet.Packet) error {
 	fmt.Printf("%s send packet seq: %d, size: %d\n", sess, p.Seq, p.Size())
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
+	if err == nil {
+		sess.bytesInFlight += uint64(p.Size())
+	}
 	return err
 }
 
