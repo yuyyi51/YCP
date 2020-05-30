@@ -113,12 +113,12 @@ func Entrance2() {
 	s := bufio.NewScanner(os.Stdin)
 	s.Scan()
 	mode := s.Text()
-	//s.Scan()
-	//host := s.Text()
-	//s.Scan()
-	//port := s.Text()
-	host := "127.0.0.1"
-	port := "7654"
+	s.Scan()
+	host := s.Text()
+	s.Scan()
+	port := s.Text()
+	//host := "127.0.0.1"
+	//port := "7654"
 	portn, _ := strconv.ParseInt(port, 10, 32)
 	if mode == "0" {
 		address := fmt.Sprintf("%s:%s", host, port)
