@@ -30,7 +30,7 @@ type BaseFrame struct {
 	raw     []byte
 }
 
-func (f BaseFrame) IsRetransmittable() bool {
+func (f *BaseFrame) IsRetransmittable() bool {
 	panic("implement me")
 }
 
@@ -47,11 +47,11 @@ func (f BaseFrame) String() string {
 	return fmt.Sprintf("Frame command: %s, size: %d", command, f.size)
 }
 
-func (f BaseFrame) Command() uint8 {
+func (f *BaseFrame) Command() uint8 {
 	return f.command
 }
 
-func (f BaseFrame) Serialize() []byte {
+func (f *BaseFrame) Serialize() []byte {
 	buffer := make([]byte, 3+len(f.raw))
 	offset := 0
 	offset = writeUint16(buffer, offset, f.size)
@@ -60,16 +60,16 @@ func (f BaseFrame) Serialize() []byte {
 	return buffer
 }
 
-func (f BaseFrame) Deserialize() Frame {
+func (f *BaseFrame) Deserialize() Frame {
 	switch f.command {
 	case DataFrameCommand:
-		return DeserializeDataFrame(f)
+		return DeserializeDataFrame(*f)
 	case AckFrameCommand:
-		return DeserializeAckFrame(f)
+		return DeserializeAckFrame(*f)
 	}
 	return nil
 }
 
-func (f BaseFrame) Size() int {
+func (f *BaseFrame) Size() int {
 	panic("do not call from BaseFrame")
 }

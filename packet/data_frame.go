@@ -12,15 +12,15 @@ type DataFrame struct {
 	Data   []byte
 }
 
-func (f DataFrame) IsRetransmittable() bool {
+func (f *DataFrame) IsRetransmittable() bool {
 	return true
 }
 
-func (f DataFrame) String() string {
+func (f *DataFrame) String() string {
 	return fmt.Sprintf("%s | Offset: %d, len: %d,  Data: 0x%s", f.BaseFrame.String(), f.Offset, len(f.Data), hex.EncodeToString(f.Data))
 }
 
-func (f DataFrame) Serialize() []byte {
+func (f *DataFrame) Serialize() []byte {
 	f.size = uint16(FrameHeaderSize + 8 + len(f.Data))
 	buffer := make([]byte, f.size)
 	offset := 0
@@ -31,22 +31,22 @@ func (f DataFrame) Serialize() []byte {
 	return buffer
 }
 
-func CreateDataFrame(data []byte, offset uint64) DataFrame {
-	f := DataFrame{}
+func CreateDataFrame(data []byte, offset uint64) *DataFrame {
+	f := &DataFrame{}
 	f.command = DataFrameCommand
 	f.Data = data
 	f.Offset = offset
 	return f
 }
 
-func DeserializeDataFrame(base BaseFrame) DataFrame {
-	f := DataFrame{}
+func DeserializeDataFrame(base BaseFrame) *DataFrame {
+	f := &DataFrame{}
 	f.BaseFrame = base
 	f.Offset = binary.BigEndian.Uint64(f.raw[0:8])
 	f.Data = f.raw[8:]
 	return f
 }
 
-func (f DataFrame) Size() int {
+func (f *DataFrame) Size() int {
 	return FrameHeaderSize + 8 + len(f.Data)
 }

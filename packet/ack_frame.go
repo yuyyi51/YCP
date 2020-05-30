@@ -11,7 +11,7 @@ type AckFrame struct {
 	RangeCount uint8
 }
 
-func (f AckFrame) String() string {
+func (f *AckFrame) String() string {
 	buffer := bytes.Buffer{}
 	for _, ran := range f.AckRanges {
 		buffer.WriteString(fmt.Sprintf("%s ", ran.String()))
@@ -19,7 +19,7 @@ func (f AckFrame) String() string {
 	return fmt.Sprintf("%s | %s", f.BaseFrame, buffer.String())
 }
 
-func (f AckFrame) Serialize() []byte {
+func (f *AckFrame) Serialize() []byte {
 	f.size = uint16(FrameHeaderSize + 1 + 16*uint16(f.RangeCount))
 	buffer := make([]byte, f.size)
 	offset := 0
@@ -33,8 +33,8 @@ func (f AckFrame) Serialize() []byte {
 	return buffer
 }
 
-func DeserializeAckFrame(base BaseFrame) AckFrame {
-	f := AckFrame{}
+func DeserializeAckFrame(base BaseFrame) *AckFrame {
+	f := &AckFrame{}
 	f.BaseFrame = base
 	offset := 0
 	f.RangeCount, offset = readUint8(base.raw, offset)
@@ -47,11 +47,11 @@ func DeserializeAckFrame(base BaseFrame) AckFrame {
 	return f
 }
 
-func (f AckFrame) Size() int {
+func (f *AckFrame) Size() int {
 	return FrameHeaderSize + 1 + 16*int(f.RangeCount)
 }
 
-func (f AckFrame) IsRetransmittable() bool {
+func (f *AckFrame) IsRetransmittable() bool {
 	return false
 }
 
@@ -64,8 +64,8 @@ func (ran AckRange) String() string {
 	return fmt.Sprintf("[%d,%d]", ran.Left, ran.Right)
 }
 
-func CreateAckFrame(ranges []AckRange) AckFrame {
-	f := AckFrame{}
+func CreateAckFrame(ranges []AckRange) *AckFrame {
+	f := &AckFrame{}
 	f.command = AckFrameCommand
 	f.AckRanges = ranges
 	f.RangeCount = uint8(len(ranges))
