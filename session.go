@@ -413,7 +413,7 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.nextPktSeq++
 	fmt.Printf("%s send packet seq: %d, size: %d\n", sess, p.Seq, p.Size())
 	rand.Seed(time.Now().UnixNano())
-	if rand.Uint64()%100 <= 10 {
+	if rand.Uint64()%100 < 0 {
 		fmt.Printf("%s lost packet seq: %d\n", sess, p.Seq)
 		return nil
 	}
