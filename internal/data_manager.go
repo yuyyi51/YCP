@@ -49,10 +49,14 @@ func (manager *DataManager) PopData() []byte {
 			//fmt.Printf("remove newRange %s\n", cur.Value.(dataRange))
 		}
 	}
+	fmt.Printf("new min offset: %d\n", manager.minOffset)
 	return buffer.Bytes()
 }
 
 func (manager *DataManager) AddDataRange(left, right uint64, data []byte) {
+	if manager.minOffset > right {
+		return
+	}
 	currentRange := dataRange{
 		left:  left,
 		right: right,

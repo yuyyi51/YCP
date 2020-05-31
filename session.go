@@ -6,6 +6,7 @@ import (
 	"code.int-2.me/yuyyi51/YCP/packet"
 	"container/list"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -179,11 +180,12 @@ func (sess *Session) SetWriteDeadline(t time.Time) error {
 }
 
 func (sess *Session) String() string {
-	return fmt.Sprintf("[%d]%s,%s", sess.conv, sess.LocalAddr(), sess.RemoteAddr())
+	return fmt.Sprintf("[%d]%s|%s", sess.conv, sess.LocalAddr(), sess.RemoteAddr())
 }
 
 func (sess *Session) run() {
 	sendTimer := time.NewTimer(packet.SessionSendInterval)
+	retransmissionTimer := time.NewTimer(packet.SessionInitRto)
 	for {
 		select {
 		case pkt := <-sess.receivedPackets:
@@ -200,6 +202,9 @@ func (sess *Session) run() {
 		case <-sess.ackChan:
 			//fmt.Printf("sendAck fired\n")
 			sess.sendAck()
+		case <-retransmissionTimer.C:
+			sess.sendRetransmission()
+			retransmissionTimer.Reset(packet.SessionInitRto)
 		}
 	}
 }
@@ -214,7 +219,7 @@ func (sess *Session) createAckFrame() *packet.AckFrame {
 		return nil
 	}
 	ackFrame := packet.CreateAckFrame(ranges)
-	fmt.Printf("sending ack frame %s\n", ackFrame)
+	//fmt.Printf("sending ack frame %s\n", ackFrame)
 	return ackFrame
 }
 
@@ -231,12 +236,37 @@ func (sess *Session) sendAck() {
 	}
 }
 
+func (sess *Session) sendRetransmission() {
+	pkts := sess.history.FindTimeoutPacket()
+	infos := make([]PacketInfo, 0)
+	for _, pkt := range pkts {
+		retrans := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
+		for _, frame := range pkt.Frames {
+			if frame.IsRetransmittable() {
+				retrans.AddFrame(frame)
+			}
+		}
+		if len(retrans.Frames) == 0 {
+			continue
+		}
+		sess.history.SendRetransmitPacket(retrans)
+		sess.sendRetransmitPacket(retrans, pkt.Seq)
+		infos = append(infos, PacketInfo{
+			seq:  pkt.Seq,
+			size: pkt.Size(),
+		})
+	}
+	//sess.congestion.OnPacketsLost(infos)
+	//sess.congestion.OnPacketsSend(infos)
+}
+
 func (sess *Session) sendData() {
 	// 能发送多少数据
 	cwd := sess.congestion.GetCongestionWindow()
 	inflight := sess.history.Inflight()
 	if cwd <= inflight {
 		// don't send
+		fmt.Printf("sendData blocked, cwd: %d, inflight: %d\n", cwd, inflight)
 		return
 	}
 	canSend := cwd - inflight
@@ -322,7 +352,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			fmt.Printf("droped ackFrame for have no range\n")
 			break
 		}
-		fmt.Printf("receive ackFrame: %s\n", ackFrame)
+		//fmt.Printf("receive ackFrame: %s\n", ackFrame)
 		sess.history.AckPackets(ackFrame.AckRanges)
 	}
 	return nil
@@ -382,6 +412,19 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.history.SendPacket(p)
 	sess.nextPktSeq++
 	fmt.Printf("%s send packet seq: %d, size: %d\n", sess, p.Seq, p.Size())
+	rand.Seed(time.Now().UnixNano())
+	if rand.Uint64()%100 <= 10 {
+		fmt.Printf("%s lost packet seq: %d\n", sess, p.Seq)
+		return nil
+	}
+	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
+	return err
+}
+
+func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64) error {
+	sess.history.SendRetransmitPacket(p)
+	sess.nextPktSeq++
+	fmt.Printf("%s send retransmit packet seq: %d, size: %d, retransmit for %d\n", sess, p.Seq, p.Size(), retransmitFor)
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
 	return err
 }

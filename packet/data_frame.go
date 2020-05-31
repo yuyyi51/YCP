@@ -2,7 +2,6 @@ package packet
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 )
 
@@ -17,7 +16,7 @@ func (f *DataFrame) IsRetransmittable() bool {
 }
 
 func (f *DataFrame) String() string {
-	return fmt.Sprintf("%s | Offset: %d, len: %d,  Data: 0x%s", f.BaseFrame.String(), f.Offset, len(f.Data), hex.EncodeToString(f.Data))
+	return fmt.Sprintf("%s | Offset: %d, len: %d", f.BaseFrame.String(), f.Offset, len(f.Data))
 }
 
 func (f *DataFrame) Serialize() []byte {

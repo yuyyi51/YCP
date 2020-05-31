@@ -128,13 +128,15 @@ func Entrance2() {
 			fmt.Printf("%v\n", err)
 		}
 		session := server.Accept()
+		total := 0
 		go func() {
 			for {
 				buffer := make([]byte, 1000)
 				fmt.Printf("reading data\n")
 				n, _ := session.Read(buffer)
+				total += n
 				if n != 0 {
-					fmt.Printf("%s\n", buffer)
+					fmt.Printf("read %d data, total: %d\n%s\n", n, total, buffer)
 				}
 			}
 		}()
@@ -150,13 +152,15 @@ func Entrance2() {
 			fmt.Printf("client dial error: %v", err)
 			os.Exit(1)
 		}
+		total := 0
 		go func() {
 			for {
 				buffer := make([]byte, 1000)
 				fmt.Printf("reading data\n")
 				n, _ := session.Read(buffer)
+				total += n
 				if n != 0 {
-					fmt.Printf("%s\n", buffer)
+					fmt.Printf("read %d data, total: %d\n%s\n", n, total, buffer)
 				}
 			}
 		}()

@@ -6,6 +6,7 @@ const (
 	SessionWriteBufferSize = 256 * 1024 * 1024
 	SessionReadBufferSize  = 256 * 1024 * 1024
 	SessionSendInterval    = 100 * time.Millisecond
+	SessionInitRto         = 100 * time.Millisecond
 	MTU                    = 1500
 	Ipv4Header             = 60
 	Ipv6Header             = 40
