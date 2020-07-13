@@ -1,5 +1,5 @@
 # YCP
 
 ## TODO
-[ ] 实现ack功能  
-[ ] 实现数据整理功能
+[ ] use rtt to calculate rto
+[ ] determine when to send ack by unacked packets count and max ack delay time

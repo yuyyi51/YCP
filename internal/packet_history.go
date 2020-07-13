@@ -2,7 +2,6 @@ package internal
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -22,6 +21,12 @@ type PacketHistoryItem struct {
 	packet          packet.Packet
 	acked           bool
 	sentTime        time.Time
+}
+
+type AckInfo struct {
+	Seq             uint64
+	Rtt             time.Duration
+	Retransmittable bool
 }
 
 func NewPacketHistory() *PacketHistory {
@@ -56,9 +61,10 @@ func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet) {
 	history.itemMap[pkt.Seq] = item
 }
 
-func (history *PacketHistory) AckPackets(ranges []packet.AckRange) {
+func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
+	ackedPackets := make([]AckInfo, 0)
 	for _, ran := range ranges {
 		for i := ran.Left; i <= ran.Right; i++ {
 			_, ok := history.itemMap[i]
@@ -66,12 +72,16 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) {
 				continue
 			}
 			history.bytesAcked += uint64(history.itemMap[i].packet.Size())
-			if history.itemMap[i].retransmittable {
-				fmt.Printf("Acked new packet [%d], rtt: %s\n", i, time.Since(history.itemMap[i].sentTime))
+			newlyAcked := AckInfo{
+				Seq:             i,
+				Rtt:             time.Since(history.itemMap[i].sentTime),
+				Retransmittable: history.itemMap[i].retransmittable,
 			}
+			ackedPackets = append(ackedPackets, newlyAcked)
 			delete(history.itemMap, i)
 		}
 	}
+	return ackedPackets
 }
 
 func (history *PacketHistory) Inflight() uint64 {

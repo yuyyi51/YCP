@@ -41,6 +41,9 @@ type Session struct {
 	nextDataOffset uint64
 
 	history *internal.PacketHistory
+
+	needAck            bool
+	receiveFirstPacket bool
 }
 
 func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
@@ -190,6 +193,11 @@ func (sess *Session) run() {
 		select {
 		case pkt := <-sess.receivedPackets:
 			sess.handlePacket(pkt)
+			if !sess.receiveFirstPacket {
+				sess.receiveFirstPacket = true
+				// send ack for the first packet soon to probe the rtt
+				sess.sendAck()
+			}
 		//case <-sess.dataSignal:
 		//	//fmt.Printf("dataSignal fired\n")
 		//	sess.sendData()
@@ -199,9 +207,6 @@ func (sess *Session) run() {
 			sess.sendData()
 			sendTimer.Reset(packet.SessionSendInterval)
 		case <-sess.closeSignal:
-		case <-sess.ackChan:
-			//fmt.Printf("sendAck fired\n")
-			sess.sendAck()
 		case <-retransmissionTimer.C:
 			sess.sendRetransmission()
 			retransmissionTimer.Reset(packet.SessionInitRto)
@@ -219,11 +224,12 @@ func (sess *Session) createAckFrame() *packet.AckFrame {
 		return nil
 	}
 	ackFrame := packet.CreateAckFrame(ranges)
-	//fmt.Printf("sending ack frame %s\n", ackFrame)
+	fmt.Printf("sending ack frame %s\n", ackFrame)
 	return ackFrame
 }
 
 func (sess *Session) sendAck() {
+	fmt.Printf("send Ack fired\n")
 	pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
 	ackFrame := sess.createAckFrame()
 	if ackFrame == nil {
@@ -264,40 +270,21 @@ func (sess *Session) sendData() {
 	// 能发送多少数据
 	cwd := sess.congestion.GetCongestionWindow()
 	inflight := sess.history.Inflight()
-	if cwd <= inflight {
-		// don't send
-		fmt.Printf("sendData blocked, cwd: %d, inflight: %d\n", cwd, inflight)
-		return
+	var canSend uint64
+	if cwd > inflight {
+		canSend = cwd - inflight
 	}
-	canSend := cwd - inflight
-	if !sess.haveDataToSend() {
-		//fmt.Println("sendData exit for have no data")
-		return
-	}
+
 	packets := make([]PacketInfo, 0)
-	sentAck := false
-	for canSend > 0 && sess.haveDataToSend() {
-		pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
-		if !sentAck {
-			sentAck = true
-			ackFrame := sess.createAckFrame()
-			if ackFrame != nil {
-				pkt.AddFrame(ackFrame)
-				if canSend < uint64(ackFrame.Size()) {
-					canSend = 0
-				}
-			}
-		}
-		size := uint64(packet.MaxDataFrameDataSize)
-		if canSend < size {
-			size = canSend
-		}
-		if size != 0 {
-			dataFrame, _ := sess.popDataFrame(int(size), sess.nextDataOffset)
-			if dataFrame != nil {
-				sess.nextDataOffset += uint64(len(dataFrame.Data))
-				pkt.AddFrame(dataFrame)
-			}
+
+	for {
+		var pkt packet.Packet
+		if canSend > 0 && sess.haveDataToSend() {
+			pkt = sess.createPacket(int(canSend))
+		} else if sess.needAck {
+			pkt = sess.createAckOnlyPacket()
+		} else {
+			break
 		}
 		if len(pkt.Frames) == 0 {
 			break
@@ -311,10 +298,50 @@ func (sess *Session) sendData() {
 		if err != nil {
 			fmt.Printf("send packet error: %v", err)
 		}
-		canSend -= size
+	}
+	if len(packets) == 0 {
+		// send nothing
+		return
 	}
 	sess.congestion.OnPacketsSend(packets)
 	fmt.Printf("cwd: %d, inFlight: %d\n", cwd, inflight)
+}
+
+func (sess *Session) createPacket(maxDataSize int) packet.Packet {
+	pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
+	remainPayload := packet.Ipv4PayloadSize
+	if sess.needAck {
+		sess.needAck = false
+		ackFrame := sess.createAckFrame()
+		if ackFrame != nil {
+			pkt.AddFrame(ackFrame)
+			remainPayload -= ackFrame.Size()
+		}
+	}
+	size := maxDataSize
+	if size > remainPayload-packet.DataFrameHeaderSize {
+		size = remainPayload - packet.DataFrameHeaderSize
+	}
+	if size > 0 {
+		dataFrame, _ := sess.popDataFrame(size)
+		if dataFrame != nil {
+			pkt.AddFrame(dataFrame)
+		}
+	}
+
+	return pkt
+}
+
+func (sess *Session) createAckOnlyPacket() packet.Packet {
+	pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
+	if sess.needAck {
+		sess.needAck = false
+		ackFrame := sess.createAckFrame()
+		if ackFrame != nil {
+			pkt.AddFrame(ackFrame)
+		}
+	}
+	return pkt
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
@@ -325,7 +352,7 @@ func (sess *Session) handlePacket(packet *packet.Packet) {
 		sess.handleFrame(frame)
 	}
 	if packet.IsRetransmittable() {
-		sess.SignalAck()
+		sess.needAck = true
 	}
 }
 
@@ -353,7 +380,10 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			break
 		}
 		//fmt.Printf("receive ackFrame: %s\n", ackFrame)
-		sess.history.AckPackets(ackFrame.AckRanges)
+		ackInfos := sess.history.AckPackets(ackFrame.AckRanges)
+		for _, ackinfo := range ackInfos {
+			sess.ackPacket(ackinfo.Seq, ackinfo.Rtt)
+		}
 	}
 	return nil
 }
@@ -392,7 +422,7 @@ func (sess *Session) haveDataToSend() bool {
 	return sess.writeBufferLen > 0
 }
 
-func (sess *Session) popDataFrame(size int, offset uint64) (*packet.DataFrame, int) {
+func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 	dataSize := size
 	sess.sessMux.Lock()
 	if dataSize > sess.writeBufferLen {
@@ -405,7 +435,9 @@ func (sess *Session) popDataFrame(size int, offset uint64) (*packet.DataFrame, i
 	remain := sess.writeBufferLen
 	sess.SignalWrite()
 	sess.sessMux.Unlock()
-	return packet.CreateDataFrame(data, offset), remain
+	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset)
+	sess.nextDataOffset += uint64(dataSize)
+	return dataFrame, remain
 }
 
 func (sess *Session) sendPacket(p packet.Packet) error {
@@ -427,6 +459,10 @@ func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64)
 	fmt.Printf("%s send retransmit packet seq: %d, size: %d, retransmit for %d\n", sess, p.Seq, p.Size(), retransmitFor)
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
 	return err
+}
+
+func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
+	fmt.Printf("Acked new packet [%d], Rtt: %s\n", seq, rtt)
 }
 
 type ackManager struct {
