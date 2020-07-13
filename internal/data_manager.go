@@ -49,7 +49,7 @@ func (manager *DataManager) PopData() []byte {
 			//fmt.Printf("remove newRange %s\n", cur.Value.(dataRange))
 		}
 	}
-	fmt.Printf("new min offset: %d\n", manager.minOffset)
+	//fmt.Printf("new min offset: %d\n", manager.minOffset)
 	return buffer.Bytes()
 }
 

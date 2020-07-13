@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"code.int-2.me/yuyyi51/YCP/internal"
 	"code.int-2.me/yuyyi51/YCP/packet"
+	"code.int-2.me/yuyyi51/YCP/utils"
 	"container/list"
 	"fmt"
 	"math/rand"
@@ -44,9 +45,13 @@ type Session struct {
 
 	needAck            bool
 	receiveFirstPacket bool
+
+	rttStat internal.RttStat
+
+	logger *utils.Logger
 }
 
-func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
+func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.Logger) *Session {
 	session := &Session{
 		conv:            conv,
 		conn:            conn,
@@ -65,6 +70,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32) *Session {
 		readingMux:      new(sync.RWMutex),
 		history:         internal.NewPacketHistory(),
 		ackChan:         make(chan struct{}, 1),
+		logger:          logger,
 	}
 	go session.run()
 	return session
@@ -115,7 +121,7 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 }
 
 func (sess *Session) Write(b []byte) (n int, err error) {
-	//fmt.Printf("start Write, len %d\n", len(b))
+	sess.logger.Debug("start Write, len %d", len(b))
 	sess.writingMux.Lock()
 	defer sess.writingMux.Unlock()
 
@@ -126,7 +132,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		sess.writeBufferLen += len(b)
 		sess.SignalData()
 		sess.sessMux.Unlock()
-		//fmt.Printf("finish Write\n")
+		sess.logger.Debug("finish Write")
 		return len(b), nil
 	}
 	n = 0
@@ -154,7 +160,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		sess.sessMux.Lock()
 	}
 	sess.sessMux.Unlock()
-	//fmt.Printf("finish Write\n")
+	sess.logger.Debug("finish Write")
 	return
 }
 
@@ -183,7 +189,7 @@ func (sess *Session) SetWriteDeadline(t time.Time) error {
 }
 
 func (sess *Session) String() string {
-	return fmt.Sprintf("[%d]%s|%s", sess.conv, sess.LocalAddr(), sess.RemoteAddr())
+	return fmt.Sprintf("[%d]%s", sess.conv, sess.RemoteAddr())
 }
 
 func (sess *Session) run() {
@@ -224,12 +230,11 @@ func (sess *Session) createAckFrame() *packet.AckFrame {
 		return nil
 	}
 	ackFrame := packet.CreateAckFrame(ranges)
-	fmt.Printf("sending ack frame %s\n", ackFrame)
+	sess.logger.Debug("sending ack frame %s", ackFrame)
 	return ackFrame
 }
 
 func (sess *Session) sendAck() {
-	fmt.Printf("send Ack fired\n")
 	pkt := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
 	ackFrame := sess.createAckFrame()
 	if ackFrame == nil {
@@ -238,7 +243,7 @@ func (sess *Session) sendAck() {
 	pkt.AddFrame(ackFrame)
 	err := sess.sendPacket(pkt)
 	if err != nil {
-		fmt.Printf("send packet error: %v", err)
+		sess.logger.Error("send packet error: %v", err)
 	}
 }
 
@@ -280,7 +285,9 @@ func (sess *Session) sendData() {
 	for {
 		var pkt packet.Packet
 		if canSend > 0 && sess.haveDataToSend() {
+			ct := utils.NewCostTimer()
 			pkt = sess.createPacket(int(canSend))
+			sess.logger.Debug("createPacket cost %s", ct.Cost())
 		} else if sess.needAck {
 			pkt = sess.createAckOnlyPacket()
 		} else {
@@ -296,7 +303,7 @@ func (sess *Session) sendData() {
 		packets = append(packets, pktInfo)
 		err := sess.sendPacket(pkt)
 		if err != nil {
-			fmt.Printf("send packet error: %v", err)
+			sess.logger.Error("send packet error: %v", err)
 		}
 	}
 	if len(packets) == 0 {
@@ -304,7 +311,7 @@ func (sess *Session) sendData() {
 		return
 	}
 	sess.congestion.OnPacketsSend(packets)
-	fmt.Printf("cwd: %d, inFlight: %d\n", cwd, inflight)
+	sess.logger.Debug("cwd: %d, inFlight: %d", sess.congestion.GetCongestionWindow(), sess.history.Inflight())
 }
 
 func (sess *Session) createPacket(maxDataSize int) packet.Packet {
@@ -345,7 +352,7 @@ func (sess *Session) createAckOnlyPacket() packet.Packet {
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
-	fmt.Printf("handle pakcet %s\n", packet.String())
+	sess.logger.Trace("receive packet %s", packet.String())
 	sess.ackManager.addAckRange(packet.Seq, packet.Seq)
 	//fmt.Println(sess.ackManager.printAckRanges())
 	for _, frame := range packet.Frames {
@@ -364,7 +371,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			return fmt.Errorf("convert Frame to DataFrame error")
 		}
 		if len(dataFrame.Data) == 0 {
-			fmt.Printf("droped dataFrame for have no data\n")
+			sess.logger.Notice("droped dataFrame for have no data")
 			break
 		}
 		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data)
@@ -376,14 +383,20 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			return fmt.Errorf("convert Frame to AckFrame error")
 		}
 		if ackFrame.RangeCount == 0 || len(ackFrame.AckRanges) == 0 {
-			fmt.Printf("droped ackFrame for have no range\n")
+			sess.logger.Notice("droped ackFrame for have no range")
 			break
 		}
 		//fmt.Printf("receive ackFrame: %s\n", ackFrame)
 		ackInfos := sess.history.AckPackets(ackFrame.AckRanges)
+		var minRtt time.Duration
 		for _, ackinfo := range ackInfos {
+			if minRtt == 0 || minRtt > ackinfo.Rtt {
+				minRtt = ackinfo.Rtt
+			}
 			sess.ackPacket(ackinfo.Seq, ackinfo.Rtt)
 		}
+		sess.rttStat.Update(minRtt)
+		sess.logger.Debug("lastedtRtt: %s, smoothRtt: %s, rto: %s\n", minRtt, sess.rttStat.SmoothRtt(), sess.rttStat.Rto())
 	}
 	return nil
 }
@@ -443,10 +456,10 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.history.SendPacket(p)
 	sess.nextPktSeq++
-	fmt.Printf("%s send packet seq: %d, size: %d\n", sess, p.Seq, p.Size())
+	sess.logger.Debug("%s send packet seq: %d, size: %d", sess, p.Seq, p.Size())
 	rand.Seed(time.Now().UnixNano())
 	if rand.Uint64()%100 < 0 {
-		fmt.Printf("%s lost packet seq: %d\n", sess, p.Seq)
+		sess.logger.Debug("%s lost packet seq: %d", sess, p.Seq)
 		return nil
 	}
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
@@ -456,13 +469,14 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64) error {
 	sess.history.SendRetransmitPacket(p)
 	sess.nextPktSeq++
-	fmt.Printf("%s send retransmit packet seq: %d, size: %d, retransmit for %d\n", sess, p.Seq, p.Size(), retransmitFor)
+	sess.logger.Debug("%s send retransmit packet seq: %d, size: %d, retransmit for %d", sess, p.Seq, p.Size(), retransmitFor)
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
 	return err
 }
 
 func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
-	fmt.Printf("Acked new packet [%d], Rtt: %s\n", seq, rtt)
+	sess.logger.Debug("Acked new packet [%d], Rtt: %s", seq, rtt)
+
 }
 
 type ackManager struct {

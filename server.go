@@ -2,6 +2,7 @@ package YCP
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
+	"code.int-2.me/yuyyi51/YCP/utils"
 	"fmt"
 	"net"
 	"sync"
@@ -13,14 +14,16 @@ type Server struct {
 	sessionMap    map[uint32]*Session
 	sessionMapMux *sync.RWMutex
 	sessionChan   chan *Session
+	logger        *utils.Logger
 }
 
-func NewServer(address string) *Server {
+func NewServer(address string, logger *utils.Logger) *Server {
 	return &Server{
 		address:       address,
 		sessionMap:    make(map[uint32]*Session),
 		sessionMapMux: new(sync.RWMutex),
 		sessionChan:   make(chan *Session, 100),
+		logger:        logger,
 	}
 }
 
@@ -65,7 +68,7 @@ func (server *Server) handlePacket(packet *packet.Packet, remoteAddr net.Addr) {
 	server.sessionMapMux.RUnlock()
 
 	server.sessionMapMux.Lock()
-	session = NewSession(server.listener, remoteAddr, packet.Conv)
+	session = NewSession(server.listener, remoteAddr, packet.Conv, server.logger)
 	server.sessionMap[packet.Conv] = session
 	server.sessionChan <- session
 	server.sessionMapMux.Unlock()

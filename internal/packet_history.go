@@ -46,7 +46,9 @@ func (history *PacketHistory) SendPacket(pkt packet.Packet) {
 		sentTime:        time.Now(),
 	}
 	history.itemMap[pkt.Seq] = item
-	history.bytesSent += uint64(pkt.Size())
+	if pkt.IsRetransmittable() {
+		history.bytesSent += uint64(pkt.Size())
+	}
 }
 
 func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet) {
@@ -71,7 +73,9 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
 			if !ok {
 				continue
 			}
-			history.bytesAcked += uint64(history.itemMap[i].packet.Size())
+			if history.itemMap[i].packet.IsRetransmittable() {
+				history.bytesAcked += uint64(history.itemMap[i].packet.Size())
+			}
 			newlyAcked := AckInfo{
 				Seq:             i,
 				Rtt:             time.Since(history.itemMap[i].sentTime),
