@@ -16,7 +16,7 @@ func (f *DataFrame) IsRetransmittable() bool {
 }
 
 func (f *DataFrame) String() string {
-	return fmt.Sprintf("%s | Offset: %d, len: %d", f.BaseFrame.String(), f.Offset, len(f.Data))
+	return fmt.Sprintf("%s | Offset: %d, len: %d, data: %s", f.BaseFrame.String(), f.Offset, len(f.Data), f.Data)
 }
 
 func (f *DataFrame) Serialize() []byte {

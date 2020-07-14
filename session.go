@@ -57,7 +57,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.L
 		conn:            conn,
 		remoteAddr:      addr,
 		receivedPackets: make(chan *packet.Packet, 500),
-		dataManager:     internal.NewDataManager(),
+		dataManager:     internal.NewDataManager(logger),
 		ackManager:      newAckManager(),
 		sessMux:         new(sync.RWMutex),
 		writeBuffer:     make([]byte, packet.SessionWriteBufferSize),
@@ -98,7 +98,7 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 	}
 	for {
 		data := sess.dataManager.PopData()
-		//fmt.Printf("pop data, len %d\n%s\n", len(data), hex.EncodeToString(data))
+		sess.logger.Debug("pop data, len %d\n%s", len(data), data)
 		if remain >= len(data) {
 			copy(b[offset:], data)
 			offset += len(data)
@@ -352,7 +352,7 @@ func (sess *Session) createAckOnlyPacket() packet.Packet {
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
-	sess.logger.Trace("receive packet %s", packet.String())
+	sess.logger.Trace("<--receive packet %s", packet)
 	sess.ackManager.addAckRange(packet.Seq, packet.Seq)
 	//fmt.Println(sess.ackManager.printAckRanges())
 	for _, frame := range packet.Frames {
@@ -456,7 +456,7 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.history.SendPacket(p)
 	sess.nextPktSeq++
-	sess.logger.Debug("%s send packet seq: %d, size: %d", sess, p.Seq, p.Size())
+	sess.logger.Trace("--> %s send packet %s", sess, p)
 	rand.Seed(time.Now().UnixNano())
 	if rand.Uint64()%100 < 0 {
 		sess.logger.Debug("%s lost packet seq: %d", sess, p.Seq)

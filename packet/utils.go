@@ -50,5 +50,7 @@ func readUint64(b []byte, offset int) (uint64, int) {
 }
 
 func readBytes(b []byte, offset int, len int) ([]byte, int) {
-	return b[offset : offset+len], offset + len
+	ret := make([]byte, len)
+	copy(ret, b[offset:offset+len])
+	return ret, offset + len
 }

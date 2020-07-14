@@ -34,19 +34,19 @@ func LogLevelToString(level int) string {
 	}
 	switch level {
 	case LogLevelTrace:
-		return "trace"
+		return "TRACE"
 	case LogLevelDebug:
-		return "debug"
+		return "DEBUG"
 	case LogLevelInfo:
-		return "info"
+		return "INFO"
 	case LogLevelNotice:
-		return "notice"
+		return "NOTICE"
 	case LogLevelWarn:
-		return "warn"
+		return "WARN"
 	case LogLevelError:
-		return "error"
+		return "ERROR"
 	case LogLevelFatal:
-		return "fatal"
+		return "FATAL"
 	}
 	return ""
 }
