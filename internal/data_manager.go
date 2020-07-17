@@ -46,6 +46,7 @@ func (manager *DataManager) PopData() []byte {
 		curRange := cur.Value.(dataRange)
 		if curRange.left == manager.minOffset {
 			buffer.Write(curRange.data)
+			manager.logger.Debug("pop range %s\n", curRange)
 			//fmt.Printf("pop range %s, data %s\n", curRange, hex.EncodeToString(curRange.data))
 			manager.minOffset = curRange.right + 1
 			manager.rangeList.Remove(cur)
