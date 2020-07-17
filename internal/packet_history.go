@@ -10,9 +10,9 @@ type PacketHistory struct {
 	itemMap    map[uint64]*PacketHistoryItem
 	mapMux     *sync.RWMutex
 	maxUna     uint64
-	bytesSent  uint64
-	inflight   uint64
-	bytesAcked uint64
+	bytesSent  int64
+	inflight   int64
+	bytesAcked int64
 }
 
 type PacketHistoryItem struct {
@@ -21,6 +21,8 @@ type PacketHistoryItem struct {
 	packet          packet.Packet
 	acked           bool
 	sentTime        time.Time
+	rtoTime         time.Time
+	queuedRto       bool
 }
 
 type AckInfo struct {
@@ -36,7 +38,7 @@ func NewPacketHistory() *PacketHistory {
 	}
 }
 
-func (history *PacketHistory) SendPacket(pkt packet.Packet) {
+func (history *PacketHistory) SendPacket(pkt packet.Packet, rto time.Duration) {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
 	item := &PacketHistoryItem{
@@ -44,14 +46,15 @@ func (history *PacketHistory) SendPacket(pkt packet.Packet) {
 		retransmittable: pkt.IsRetransmittable(),
 		packet:          pkt,
 		sentTime:        time.Now(),
+		rtoTime:         time.Now().Add(rto),
 	}
 	history.itemMap[pkt.Seq] = item
 	if pkt.IsRetransmittable() {
-		history.bytesSent += uint64(pkt.Size())
+		history.bytesSent += int64(pkt.Size())
 	}
 }
 
-func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet) {
+func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet, rto time.Duration, retransmitFor uint64) {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
 	item := &PacketHistoryItem{
@@ -59,8 +62,10 @@ func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet) {
 		retransmittable: pkt.IsRetransmittable(),
 		packet:          pkt,
 		sentTime:        time.Now(),
+		rtoTime:         time.Now().Add(rto),
 	}
 	history.itemMap[pkt.Seq] = item
+	delete(history.itemMap, retransmitFor)
 }
 
 func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
@@ -74,7 +79,7 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
 				continue
 			}
 			if history.itemMap[i].packet.IsRetransmittable() {
-				history.bytesAcked += uint64(history.itemMap[i].packet.Size())
+				history.bytesAcked += int64(history.itemMap[i].packet.Size())
 			}
 			newlyAcked := AckInfo{
 				Seq:             i,
@@ -88,18 +93,24 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
 	return ackedPackets
 }
 
-func (history *PacketHistory) Inflight() uint64 {
+func (history *PacketHistory) Inflight() int64 {
 	return history.bytesSent - history.bytesAcked
+}
+
+func (history *PacketHistory) IsInflight(seq uint64) bool {
+	_, ok := history.itemMap[seq]
+	return ok
 }
 
 func (history *PacketHistory) FindTimeoutPacket() []packet.Packet {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
 	needRetransmit := make([]packet.Packet, 0)
-	for i, pkt := range history.itemMap {
-		if time.Since(pkt.sentTime) > packet.SessionInitRto {
+	for _, pkt := range history.itemMap {
+		if !pkt.queuedRto && pkt.rtoTime.Before(time.Now()) {
 			needRetransmit = append(needRetransmit, pkt.packet)
-			delete(history.itemMap, i)
+			pkt.queuedRto = true
+			//delete(history.itemMap, i)
 		}
 	}
 	return needRetransmit

@@ -120,7 +120,7 @@ func Entrance2() {
 	port := s.Text()
 	//host := "127.0.0.1"
 	//port := "7654"
-	logger := utils.NewLogger("info", 2)
+	logger := utils.NewLogger("debug", 2)
 	portn, _ := strconv.ParseInt(port, 10, 32)
 	if mode == "0" {
 		address := fmt.Sprintf("%s:%s", host, port)

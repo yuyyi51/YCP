@@ -6,7 +6,7 @@ type CongestionAlgorithm interface {
 	OnPacketsSend([]PacketInfo)
 	OnPacketsAck([]PacketInfo)
 	OnPacketsLost([]PacketInfo)
-	GetCongestionWindow() uint64
+	GetCongestionWindow() int64
 }
 
 type PacketInfo struct {
@@ -20,9 +20,9 @@ const (
 )
 
 type RenoAlgorithm struct {
-	cwnd               uint64
+	cwnd               int64
 	status             int
-	slowStartThreshold uint64
+	slowStartThreshold int64
 }
 
 func NewRenoAlgorithm() *RenoAlgorithm {
@@ -35,13 +35,13 @@ func NewRenoAlgorithm() *RenoAlgorithm {
 
 func (r *RenoAlgorithm) OnPacketsSend(pkts []PacketInfo) {
 	if r.status == CongestionAvoid {
-		r.cwnd += uint64(len(pkts))
+		r.cwnd += int64(len(pkts))
 	}
 }
 
 func (r *RenoAlgorithm) OnPacketsAck(pkts []PacketInfo) {
 	if r.cwnd < r.slowStartThreshold {
-		r.cwnd += uint64(len(pkts))
+		r.cwnd += int64(len(pkts))
 	} else {
 		r.status = CongestionAvoid
 	}
@@ -53,6 +53,6 @@ func (r *RenoAlgorithm) OnPacketsLost(pkts []PacketInfo) {
 	r.status = SlowStart
 }
 
-func (r *RenoAlgorithm) GetCongestionWindow() uint64 {
+func (r *RenoAlgorithm) GetCongestionWindow() int64 {
 	return r.cwnd
 }

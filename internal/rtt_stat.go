@@ -1,6 +1,9 @@
 package internal
 
-import "time"
+import (
+	"code.int-2.me/yuyyi51/YCP/packet"
+	"time"
+)
 
 type RttStat struct {
 	smoothRtt time.Duration
@@ -33,5 +36,8 @@ func (stat *RttStat) SmoothRtt() time.Duration {
 }
 
 func (stat *RttStat) Rto() time.Duration {
+	if stat.rto == 0 {
+		return packet.SessionInitRto
+	}
 	return stat.rto
 }

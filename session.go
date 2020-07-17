@@ -48,7 +48,8 @@ type Session struct {
 
 	rttStat internal.RttStat
 
-	logger *utils.Logger
+	logger              *utils.Logger
+	retransmissionQueue []packet.Packet
 }
 
 func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.Logger) *Session {
@@ -194,7 +195,6 @@ func (sess *Session) String() string {
 
 func (sess *Session) run() {
 	sendTimer := time.NewTimer(packet.SessionSendInterval)
-	retransmissionTimer := time.NewTimer(packet.SessionInitRto)
 	for {
 		select {
 		case pkt := <-sess.receivedPackets:
@@ -204,18 +204,12 @@ func (sess *Session) run() {
 				// send ack for the first packet soon to probe the rtt
 				sess.sendAck()
 			}
-		//case <-sess.dataSignal:
-		//	//fmt.Printf("dataSignal fired\n")
-		//	sess.sendData()
-		//	sendTimer.Reset(packet.SessionSendInterval)
 		case <-sendTimer.C:
 			//fmt.Printf("sendTimer fired\n")
-			sess.sendData()
+			//sess.sendData()
+			sess.sendPackets()
 			sendTimer.Reset(packet.SessionSendInterval)
 		case <-sess.closeSignal:
-		case <-retransmissionTimer.C:
-			sess.sendRetransmission()
-			retransmissionTimer.Reset(packet.SessionInitRto)
 		}
 	}
 }
@@ -247,12 +241,28 @@ func (sess *Session) sendAck() {
 	}
 }
 
-func (sess *Session) sendRetransmission() {
-	pkts := sess.history.FindTimeoutPacket()
-	infos := make([]PacketInfo, 0)
-	for _, pkt := range pkts {
+func (sess *Session) sendPackets() {
+	// how many data can we send
+	cwd := sess.congestion.GetCongestionWindow()
+	inflight := sess.history.Inflight()
+	var canSend int64
+	canSend = cwd - inflight
+	packets := make([]PacketInfo, 0)
+
+	// send retransmission first
+	rtoPkts := sess.history.FindTimeoutPacket()
+	sess.retransmissionQueue = append(sess.retransmissionQueue, rtoPkts...)
+	retransNum := 0
+	newNum := 0
+	ackNum := 0
+	for canSend > 0 && len(sess.retransmissionQueue) > 0 {
+		rtoPkt := sess.retransmissionQueue[0]
+		if !sess.history.IsInflight(rtoPkt.Seq) {
+			continue
+		}
+		sess.retransmissionQueue = sess.retransmissionQueue[1:]
 		retrans := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
-		for _, frame := range pkt.Frames {
+		for _, frame := range rtoPkt.Frames {
 			if frame.IsRetransmittable() {
 				retrans.AddFrame(frame)
 			}
@@ -260,39 +270,20 @@ func (sess *Session) sendRetransmission() {
 		if len(retrans.Frames) == 0 {
 			continue
 		}
-		sess.history.SendRetransmitPacket(retrans)
-		sess.sendRetransmitPacket(retrans, pkt.Seq)
-		infos = append(infos, PacketInfo{
-			seq:  pkt.Seq,
-			size: pkt.Size(),
-		})
-	}
-	//sess.congestion.OnPacketsLost(infos)
-	//sess.congestion.OnPacketsSend(infos)
-}
-
-func (sess *Session) sendData() {
-	// 能发送多少数据
-	cwd := sess.congestion.GetCongestionWindow()
-	inflight := sess.history.Inflight()
-	var canSend uint64
-	if cwd > inflight {
-		canSend = cwd - inflight
-	}
-
-	packets := make([]PacketInfo, 0)
-
-	for {
-		var pkt packet.Packet
-		if canSend > 0 && sess.haveDataToSend() {
-			ct := utils.NewCostTimer()
-			pkt = sess.createPacket(int(canSend))
-			sess.logger.Debug("createPacket cost %s", ct.Cost())
-		} else if sess.needAck {
-			pkt = sess.createAckOnlyPacket()
-		} else {
-			break
+		err := sess.sendRetransmitPacket(retrans, rtoPkt.Seq)
+		if err != nil {
+			sess.logger.Error("send packet error: %v", err)
 		}
+		packets = append(packets, PacketInfo{
+			seq:  retrans.Seq,
+			size: retrans.Size(),
+		})
+		canSend -= int64(retrans.Size())
+		retransNum++
+	}
+	// then send new data
+	for canSend > 0 && sess.haveDataToSend() {
+		pkt := sess.createPacket(int(canSend))
 		if len(pkt.Frames) == 0 {
 			break
 		}
@@ -305,13 +296,30 @@ func (sess *Session) sendData() {
 		if err != nil {
 			sess.logger.Error("send packet error: %v", err)
 		}
+		canSend -= int64(pkt.Size())
+		newNum++
 	}
-	if len(packets) == 0 {
-		// send nothing
-		return
+	// finally see whether need send ack only packet
+	if sess.needAck {
+		pkt := sess.createAckOnlyPacket()
+		if len(pkt.Frames) != 0 {
+			pktInfo := PacketInfo{
+				seq:  pkt.Seq,
+				size: pkt.Size(),
+			}
+			packets = append(packets, pktInfo)
+			err := sess.sendPacket(pkt)
+			if err != nil {
+				sess.logger.Error("send packet error: %v", err)
+			}
+		}
+		ackNum++
 	}
-	sess.congestion.OnPacketsSend(packets)
-	sess.logger.Debug("cwd: %d, inFlight: %d", sess.congestion.GetCongestionWindow(), sess.history.Inflight())
+	if len(packets) != 0 {
+		sess.congestion.OnPacketsSend(packets)
+		sess.logger.Debug("sendPackets done, cwd: %d, inFlight: %d, retransNum: %d, newNum: %d, ackNum: %d", sess.congestion.GetCongestionWindow(), sess.history.Inflight(), retransNum, newNum, ackNum)
+	}
+
 }
 
 func (sess *Session) createPacket(maxDataSize int) packet.Packet {
@@ -352,7 +360,7 @@ func (sess *Session) createAckOnlyPacket() packet.Packet {
 }
 
 func (sess *Session) handlePacket(packet *packet.Packet) {
-	sess.logger.Trace("<--receive packet %s", packet)
+	sess.logger.Debug("<--receive packet %s", packet)
 	sess.ackManager.addAckRange(packet.Seq, packet.Seq)
 	//fmt.Println(sess.ackManager.printAckRanges())
 	for _, frame := range packet.Frames {
@@ -454,9 +462,9 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 }
 
 func (sess *Session) sendPacket(p packet.Packet) error {
-	sess.history.SendPacket(p)
+	sess.history.SendPacket(p, sess.rttStat.Rto())
 	sess.nextPktSeq++
-	sess.logger.Trace("--> %s send packet %s", sess, p)
+	sess.logger.Debug("--> %s send packet %s", sess, p)
 	rand.Seed(time.Now().UnixNano())
 	if rand.Uint64()%100 < 0 {
 		sess.logger.Debug("%s lost packet seq: %d", sess, p.Seq)
@@ -467,7 +475,7 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 }
 
 func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64) error {
-	sess.history.SendRetransmitPacket(p)
+	sess.history.SendRetransmitPacket(p, sess.rttStat.Rto(), retransmitFor)
 	sess.nextPktSeq++
 	sess.logger.Debug("%s send retransmit packet seq: %d, size: %d, retransmit for %d", sess, p.Seq, p.Size(), retransmitFor)
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
@@ -476,7 +484,6 @@ func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64)
 
 func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
 	sess.logger.Debug("Acked new packet [%d], Rtt: %s", seq, rtt)
-
 }
 
 type ackManager struct {
