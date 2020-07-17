@@ -99,7 +99,6 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 	}
 	for {
 		data := sess.dataManager.PopData()
-		sess.logger.Debug("pop data, len %d\n%s", len(data), data)
 		if remain >= len(data) {
 			copy(b[offset:], data)
 			offset += len(data)
