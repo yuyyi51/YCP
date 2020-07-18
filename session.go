@@ -69,7 +69,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.L
 		readSignal:      make(chan struct{}, 1),
 		congestion:      NewRenoAlgorithm(),
 		readingMux:      new(sync.RWMutex),
-		history:         internal.NewPacketHistory(),
+		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
 		logger:          logger,
 	}
@@ -108,6 +108,7 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 			offset += remain
 			break
 		}
+		sess.logger.Debug("Reading data: %d, offset: %d, dataBuffer: %d", len(data), offset, len(sess.dataBuffer))
 		if offset == 0 {
 			// no data
 			select {
@@ -117,22 +118,22 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 			break
 		}
 	}
+	sess.logger.Debug("Read data done, offset: %d", offset)
 	return offset, nil
 }
 
 func (sess *Session) Write(b []byte) (n int, err error) {
-	sess.logger.Debug("start Write, len %d", len(b))
 	sess.writingMux.Lock()
 	defer sess.writingMux.Unlock()
-
 	sess.sessMux.Lock()
+	sess.logger.Debug("start Write, len %d, writeBuffer: %d", len(b), sess.writeBufferLen)
 	if len(b)+sess.writeBufferLen <= len(sess.writeBuffer) {
 		// enough space in buffer
 		copy(sess.writeBuffer[sess.writeBufferLen:], b)
 		sess.writeBufferLen += len(b)
 		sess.SignalData()
 		sess.sessMux.Unlock()
-		sess.logger.Debug("finish Write")
+		sess.logger.Debug("finish Write, bytesWritten: %d, writeBuffer: %d", len(b), sess.writeBufferLen)
 		return len(b), nil
 	}
 	n = 0
@@ -144,9 +145,12 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		if canCopy > 0 {
 			copy(sess.writeBuffer[sess.writeBufferLen:], b[n:n+canCopy])
 			n += canCopy
+			sess.writeBufferLen += canCopy
 			//sess.SignalData()
 		}
+		sess.logger.Debug("Writing data, canCopy: %d, dataWritten: %d, dataRemain: %d, dataLen: %d, writeBuffer: %d", canCopy, n, len(b)-n, len(b), sess.writeBufferLen)
 		if n >= len(b) {
+			sess.sessMux.Unlock()
 			break
 		}
 		sess.sessMux.Unlock()
@@ -159,8 +163,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 		}
 		sess.sessMux.Lock()
 	}
-	sess.sessMux.Unlock()
-	sess.logger.Debug("finish Write")
+	sess.logger.Debug("finish Write, bytesWritten: %d, writeBuffer: %d", n, sess.writeBufferLen)
 	return
 }
 
@@ -256,10 +259,10 @@ func (sess *Session) sendPackets() {
 	ackNum := 0
 	for canSend > 0 && len(sess.retransmissionQueue) > 0 {
 		rtoPkt := sess.retransmissionQueue[0]
+		sess.retransmissionQueue = sess.retransmissionQueue[1:]
 		if !sess.history.IsInflight(rtoPkt.Seq) {
 			continue
 		}
-		sess.retransmissionQueue = sess.retransmissionQueue[1:]
 		retrans := packet.NewPacket(sess.conv, sess.nextPktSeq, 0)
 		for _, frame := range rtoPkt.Frames {
 			if frame.IsRetransmittable() {
@@ -437,8 +440,8 @@ func (sess *Session) SignalAck() {
 }
 
 func (sess *Session) haveDataToSend() bool {
-	sess.sessMux.Lock()
-	defer sess.sessMux.Unlock()
+	sess.sessMux.RLock()
+	defer sess.sessMux.RUnlock()
 	return sess.writeBufferLen > 0
 }
 
@@ -457,6 +460,7 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 	sess.sessMux.Unlock()
 	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset)
 	sess.nextDataOffset += uint64(dataSize)
+	sess.logger.Debug("popDataFrame size: %d, dataSize: %d, nextDataOffset: %d, remain: %d", size, dataSize, sess.nextDataOffset, remain)
 	return dataFrame, remain
 }
 
@@ -482,7 +486,7 @@ func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64)
 }
 
 func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
-	sess.logger.Debug("Acked new packet [%d], Rtt: %s", seq, rtt)
+	sess.logger.Debug("Acked new packet [%d], Rtt: %s, inflight: %d", seq, rtt, sess.history.Inflight())
 }
 
 type ackManager struct {

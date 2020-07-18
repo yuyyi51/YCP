@@ -6,7 +6,10 @@ import (
 	"code.int-2.me/yuyyi51/YCP/utils"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
+	"sync"
 )
 
 func createApp() *cli.App {
@@ -49,6 +52,12 @@ func createApp() *cli.App {
 				Usage:   "save data transformed into `FILE`",
 				Value:   "",
 			},
+			&cli.IntFlag{
+				Name:    "pprof_port",
+				Aliases: []string{"pp"},
+				Usage:   "start a pprof server with `PORT`",
+				Value:   0,
+			},
 		},
 		Action: appAction,
 	}
@@ -63,6 +72,13 @@ func appAction(c *cli.Context) error {
 	logger := utils.NewLogger(logLevel, 2)
 	file := c.String("file")
 	output := c.String("output")
+	pprofPort := c.Int("pprof_port")
+	if pprofPort != 0 {
+		go func() {
+			logger.Debug("%v", http.ListenAndServe(fmt.Sprintf("localhost:%d", pprofPort), nil))
+		}()
+	}
+
 	s := bufio.NewScanner(os.Stdin)
 
 	var session *YCP.Session
@@ -97,7 +113,7 @@ func appAction(c *cli.Context) error {
 			}
 		}()
 	} else {
-		fs, err := os.OpenFile(output, os.O_CREATE|os.O_RDWR, 0755)
+		fs, err := os.OpenFile(output, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
 		if err != nil {
 			logger.Fatal("open output file %s error: %v", output, err)
 		}
@@ -123,6 +139,11 @@ func appAction(c *cli.Context) error {
 					logger.Error("write output file %s error: %v", output, err)
 					break
 				}
+				err = writer.Flush()
+				if err != nil {
+					logger.Error("flush output file %s error: %v", output, err)
+					break
+				}
 			}
 			logger.Info("read routine exit")
 
@@ -146,6 +167,7 @@ func appAction(c *cli.Context) error {
 		reader := bufio.NewReader(fs)
 		total := 0
 		counter := 0
+		readTotal := 0
 		for {
 			buffer := make([]byte, 10240) // 10KB
 			n, err := reader.Read(buffer)
@@ -153,12 +175,7 @@ func appAction(c *cli.Context) error {
 				logger.Error("read from file %s error: %v", file, err)
 				break
 			}
-			total += n
-			counter += n
-			if counter >= 1024*1000 {
-				logger.Info("read %d data now", total)
-				counter -= 1024 * 1000
-			}
+			readTotal += n
 			m, err := session.Write(buffer[:n])
 			if err != nil {
 				logger.Error("write info session error: %v", err)
@@ -167,10 +184,13 @@ func appAction(c *cli.Context) error {
 			total += m
 			counter += m
 			if counter >= 1024*1000 {
-				logger.Info("write %d data now", total)
+				logger.Info("write %d data now, read %d", total, readTotal)
 				counter -= 1024 * 1000
 			}
 		}
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+		wg.Wait()
 		logger.Info("write routine exit")
 	}
 

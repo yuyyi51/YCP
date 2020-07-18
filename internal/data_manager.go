@@ -5,12 +5,14 @@ import (
 	"code.int-2.me/yuyyi51/YCP/utils"
 	"container/list"
 	"fmt"
+	"sync"
 )
 
 type DataManager struct {
 	rangeList *list.List
 	minOffset uint64
 	logger    *utils.Logger
+	dataMux   *sync.RWMutex
 }
 
 type dataRange struct {
@@ -27,9 +29,12 @@ func NewDataManager(logger *utils.Logger) *DataManager {
 	return &DataManager{
 		rangeList: list.New(),
 		logger:    logger,
+		dataMux:   new(sync.RWMutex),
 	}
 }
 func (manager *DataManager) PrintDataRanges() string {
+	manager.dataMux.RLock()
+	defer manager.dataMux.RUnlock()
 	buffer := bytes.Buffer{}
 	for cur := manager.rangeList.Front(); cur != nil; cur = cur.Next() {
 		buffer.WriteString(fmt.Sprintf("%s ", cur.Value.(dataRange)))
@@ -38,6 +43,8 @@ func (manager *DataManager) PrintDataRanges() string {
 }
 
 func (manager *DataManager) PopData() []byte {
+	manager.dataMux.RLock()
+	defer manager.dataMux.RUnlock()
 	buffer := bytes.Buffer{}
 	cur := manager.rangeList.Front()
 	curr := cur
@@ -59,6 +66,8 @@ func (manager *DataManager) PopData() []byte {
 }
 
 func (manager *DataManager) AddDataRange(left, right uint64, data []byte) {
+	manager.dataMux.Lock()
+	defer manager.dataMux.Unlock()
 	if manager.minOffset > right {
 		return
 	}
