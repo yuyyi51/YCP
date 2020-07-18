@@ -50,6 +50,8 @@ type Session struct {
 
 	logger              *utils.Logger
 	retransmissionQueue []packet.Packet
+
+	lossRate int
 }
 
 func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.Logger) *Session {
@@ -469,7 +471,7 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.nextPktSeq++
 	sess.logger.Debug("--> %s send packet %s", sess, p)
 	rand.Seed(time.Now().UnixNano())
-	if rand.Uint64()%100 < 0 {
+	if rand.Uint32()%100 < uint32(sess.lossRate) {
 		sess.logger.Debug("%s lost packet seq: %d", sess, p.Seq)
 		return nil
 	}
@@ -487,6 +489,10 @@ func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64)
 
 func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
 	sess.logger.Debug("Acked new packet [%d], Rtt: %s, inflight: %d", seq, rtt, sess.history.Inflight())
+}
+
+func (sess *Session) SetLossRate(loss int) {
+	sess.lossRate = loss
 }
 
 type ackManager struct {

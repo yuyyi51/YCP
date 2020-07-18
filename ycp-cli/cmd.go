@@ -58,6 +58,11 @@ func createApp() *cli.App {
 				Usage:   "start a pprof server with `PORT`",
 				Value:   0,
 			},
+			&cli.IntFlag{
+				Name:  "loss",
+				Usage: "set a loss rate in sending packets(0-100)",
+				Value: 0,
+			},
 		},
 		Action: appAction,
 	}
@@ -73,6 +78,7 @@ func appAction(c *cli.Context) error {
 	file := c.String("file")
 	output := c.String("output")
 	pprofPort := c.Int("pprof_port")
+	loss := c.Int("loss")
 	if pprofPort != 0 {
 		go func() {
 			logger.Debug("%v", http.ListenAndServe(fmt.Sprintf("localhost:%d", pprofPort), nil))
@@ -88,6 +94,7 @@ func appAction(c *cli.Context) error {
 		if err != nil {
 			logger.Fatal("client dial error: %v", err)
 		}
+		session.SetLossRate(loss)
 	} else {
 		address := fmt.Sprintf("%s:%d", address, port)
 		server := YCP.NewServer(address, logger)
@@ -96,6 +103,7 @@ func appAction(c *cli.Context) error {
 			logger.Fatal("server listen error: %v", err)
 		}
 		session = server.Accept()
+		session.SetLossRate(loss)
 	}
 
 	// read routine
@@ -121,6 +129,7 @@ func appAction(c *cli.Context) error {
 		go func() {
 			total := 0
 			counter := 0
+			record := utils.NewCostTimer()
 			for {
 				buffer := make([]byte, 10240) // 10KB
 				n, err := session.Read(buffer)
@@ -130,9 +139,13 @@ func appAction(c *cli.Context) error {
 				}
 				total += n
 				counter += n
-				if counter >= 1024*1000 {
-					logger.Info("read %d data now", total)
-					counter -= 1024 * 1000
+				if counter >= 1024*10000 {
+					cost := float64(record.Cost().Milliseconds())
+					record.Reset()
+					dataTrans := float64(1024 * 10000)
+					bandwidth := dataTrans / cost * 1000 / 1024 // KB
+					logger.Info("read %d data now, bandwidth: %.2fKB/s", total, bandwidth)
+					counter -= 1024 * 10000
 				}
 				_, err = writer.Write(buffer[:n])
 				if err != nil {
@@ -168,6 +181,7 @@ func appAction(c *cli.Context) error {
 		total := 0
 		counter := 0
 		readTotal := 0
+		record := utils.NewCostTimer()
 		for {
 			buffer := make([]byte, 10240) // 10KB
 			n, err := reader.Read(buffer)
@@ -183,9 +197,13 @@ func appAction(c *cli.Context) error {
 			}
 			total += m
 			counter += m
-			if counter >= 1024*1000 {
-				logger.Info("write %d data now, read %d", total, readTotal)
-				counter -= 1024 * 1000
+			if counter >= 1024*10000 {
+				cost := float64(record.Cost().Milliseconds())
+				record.Reset()
+				dataTrans := float64(1024 * 10000)
+				bandwidth := dataTrans / cost * 1000 / 1024 // KB
+				logger.Info("write %d data now, read %d, bandwidth: %.2fKB/s", total, readTotal, bandwidth)
+				counter -= 1024 * 10000
 			}
 		}
 		wg := new(sync.WaitGroup)

@@ -14,7 +14,7 @@ type Packet struct {
 
 func (p Packet) String() string {
 	buffer := bytes.Buffer{}
-	buffer.WriteString(fmt.Sprintf("Packet Conv: %d, Seq: %d, Rcv: %d\n", p.Conv, p.Seq, p.Rcv))
+	buffer.WriteString(fmt.Sprintf("Packet Conv: %d, Seq: %d, Rcv: %d, Size: %d\n", p.Conv, p.Seq, p.Rcv, p.Size()))
 	for _, frame := range p.Frames {
 		buffer.WriteString(fmt.Sprintf("--%s\n", frame.String()))
 	}
