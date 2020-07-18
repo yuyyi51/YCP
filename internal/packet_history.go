@@ -75,10 +75,10 @@ func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet, rto time.D
 	delete(history.itemMap, retransmitFor)
 }
 
-func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
+func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
-	ackedPackets := make([]AckInfo, 0)
+	ackedPackets := make([]PacketInfo, 0)
 	for _, ran := range ranges {
 		for i := ran.Left; i <= ran.Right; i++ {
 			_, ok := history.itemMap[i]
@@ -88,10 +88,11 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []AckInfo {
 			if history.itemMap[i].packet.IsRetransmittable() && !history.itemMap[i].queuedRto {
 				history.bytesAck += int64(history.itemMap[i].packet.Size())
 			}
-			newlyAcked := AckInfo{
+			newlyAcked := PacketInfo{
 				Seq:             i,
 				Rtt:             time.Since(history.itemMap[i].sentTime),
 				Retransmittable: history.itemMap[i].retransmittable,
+				Size:            history.itemMap[i].packet.Size(),
 			}
 			ackedPackets = append(ackedPackets, newlyAcked)
 			delete(history.itemMap, i)

@@ -36,7 +36,7 @@ type Session struct {
 	dataSignal  chan struct{}
 	ackChan     chan struct{}
 
-	congestion CongestionAlgorithm
+	congestion internal.CongestionAlgorithm
 
 	nextPktSeq     uint64
 	nextDataOffset uint64
@@ -69,7 +69,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.L
 		closeSignal:     make(chan struct{}, 1),
 		dataSignal:      make(chan struct{}, 1),
 		readSignal:      make(chan struct{}, 1),
-		congestion:      NewRenoAlgorithm(),
+		congestion:      internal.NewRenoAlgorithm(),
 		readingMux:      new(sync.RWMutex),
 		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
@@ -251,11 +251,12 @@ func (sess *Session) sendPackets() {
 	inflight := sess.history.Inflight()
 	var canSend int64
 	canSend = cwd - inflight
-	packets := make([]PacketInfo, 0)
+	packets := make([]internal.PacketInfo, 0)
 
 	// send retransmission first
 	rtoPkts := sess.history.FindTimeoutPacket()
 	sess.retransmissionQueue = append(sess.retransmissionQueue, rtoPkts...)
+	sess.congestion.OnPacketsLost(internal.PacketsToInfo(rtoPkts))
 	retransNum := 0
 	newNum := 0
 	ackNum := 0
@@ -278,9 +279,9 @@ func (sess *Session) sendPackets() {
 		if err != nil {
 			sess.logger.Error("send packet error: %v", err)
 		}
-		packets = append(packets, PacketInfo{
-			seq:  retrans.Seq,
-			size: retrans.Size(),
+		packets = append(packets, internal.PacketInfo{
+			Seq:  retrans.Seq,
+			Size: retrans.Size(),
 		})
 		canSend -= int64(retrans.Size())
 		retransNum++
@@ -291,9 +292,9 @@ func (sess *Session) sendPackets() {
 		if len(pkt.Frames) == 0 {
 			break
 		}
-		pktInfo := PacketInfo{
-			seq:  pkt.Seq,
-			size: pkt.Size(),
+		pktInfo := internal.PacketInfo{
+			Seq:  pkt.Seq,
+			Size: pkt.Size(),
 		}
 		packets = append(packets, pktInfo)
 		err := sess.sendPacket(pkt)
@@ -307,9 +308,9 @@ func (sess *Session) sendPackets() {
 	if sess.needAck {
 		pkt := sess.createAckOnlyPacket()
 		if len(pkt.Frames) != 0 {
-			pktInfo := PacketInfo{
-				seq:  pkt.Seq,
-				size: pkt.Size(),
+			pktInfo := internal.PacketInfo{
+				Seq:  pkt.Seq,
+				Size: pkt.Size(),
 			}
 			packets = append(packets, pktInfo)
 			err := sess.sendPacket(pkt)
@@ -407,6 +408,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			}
 			sess.ackPacket(ackinfo.Seq, ackinfo.Rtt)
 		}
+		sess.congestion.OnPacketsAck(ackInfos)
 		sess.rttStat.Update(minRtt)
 		sess.logger.Debug("lastedtRtt: %s, smoothRtt: %s, rto: %s\n", minRtt, sess.rttStat.SmoothRtt(), sess.rttStat.Rto())
 	}
@@ -462,7 +464,7 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 	sess.sessMux.Unlock()
 	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset)
 	sess.nextDataOffset += uint64(dataSize)
-	sess.logger.Debug("popDataFrame size: %d, dataSize: %d, nextDataOffset: %d, remain: %d", size, dataSize, sess.nextDataOffset, remain)
+	sess.logger.Debug("popDataFrame Size: %d, dataSize: %d, nextDataOffset: %d, remain: %d", size, dataSize, sess.nextDataOffset, remain)
 	return dataFrame, remain
 }
 
@@ -472,7 +474,7 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.logger.Debug("--> %s send packet %s", sess, p)
 	rand.Seed(time.Now().UnixNano())
 	if rand.Uint32()%100 < uint32(sess.lossRate) {
-		sess.logger.Debug("%s lost packet seq: %d", sess, p.Seq)
+		sess.logger.Debug("%s lost packet Seq: %d", sess, p.Seq)
 		return nil
 	}
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
@@ -482,7 +484,7 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64) error {
 	sess.history.SendRetransmitPacket(p, sess.rttStat.Rto(), retransmitFor)
 	sess.nextPktSeq++
-	sess.logger.Debug("%s send retransmit packet seq: %d, size: %d, retransmit for %d", sess, p.Seq, p.Size(), retransmitFor)
+	sess.logger.Debug("%s send retransmit packet Seq: %d, Size: %d, retransmit for %d", sess, p.Seq, p.Size(), retransmitFor)
 	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
 	return err
 }

@@ -8,7 +8,7 @@ const (
 	SessionSendInterval    = 10 * time.Millisecond
 	SessionInitRto         = 1000 * time.Millisecond
 	SessionAckInterval     = 10 * time.Millisecond
-	MTU                    = 1500
+	MTU                    = 1280
 	Ipv4Header             = 60
 	Ipv6Header             = 40
 	UdpHeader              = 20

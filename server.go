@@ -72,6 +72,7 @@ func (server *Server) handlePacket(packet *packet.Packet, remoteAddr net.Addr) {
 	server.sessionMap[packet.Conv] = session
 	server.sessionChan <- session
 	server.sessionMapMux.Unlock()
+	server.logger.Debug("new connection %s", session)
 
 	session.receivedPackets <- packet
 }
