@@ -2,6 +2,7 @@ package internal
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
+	"code.int-2.me/yuyyi51/YCP/utils"
 	"time"
 )
 
@@ -47,13 +48,15 @@ type RenoAlgorithm struct {
 	round              int64
 	lastRoundPkt       int64
 	maxSent            int64
+	logger             *utils.Logger
 }
 
-func NewRenoAlgorithm() *RenoAlgorithm {
+func NewRenoAlgorithm(logger *utils.Logger) *RenoAlgorithm {
 	return &RenoAlgorithm{
-		cwnd:               32 * packet.Ipv4PayloadSize,
+		cwnd:               100 * packet.Ipv4PayloadSize,
 		status:             SlowStart,
-		slowStartThreshold: 64 * packet.Ipv4PayloadSize,
+		slowStartThreshold: 200 * packet.Ipv4PayloadSize,
+		logger:             logger,
 	}
 }
 
@@ -85,13 +88,25 @@ func (r *RenoAlgorithm) OnPacketsAck(pkts []PacketInfo) {
 			r.cwnd += packet.Ipv4PayloadSize
 		}
 	}
+	r.logger.Debug("Reno OnPacketsAck cwnd: %d", r.cwnd)
 }
 
 func (r *RenoAlgorithm) OnPacketsLost(pkts []PacketInfo) {
 	if len(pkts) != 0 {
-		r.slowStartThreshold = r.cwnd >> 1
-		r.cwnd = 32 * packet.Ipv4PayloadSize
-		r.status = SlowStart
+		lostSeqs := make([]uint64, 0, len(pkts))
+		for _, pkt := range pkts {
+			//r.cwnd -= int64(pkt.Size)
+			lostSeqs = append(lostSeqs, pkt.Seq)
+		}
+		r.logger.Debug("Reno OnPacketsLost num: %d, %v", len(lostSeqs), lostSeqs)
+		r.cwnd -= packet.Ipv4PayloadSize
+		if r.cwnd < 100*packet.Ipv4PayloadSize {
+			r.cwnd = 100 * packet.Ipv4PayloadSize
+		}
+		//r.slowStartThreshold = r.cwnd >> 1
+		//r.cwnd = 100 * packet.Ipv4PayloadSize
+		//r.status = SlowStart
+		r.logger.Debug("Reno OnPacketsLost cwnd: %d", r.cwnd)
 	}
 }
 

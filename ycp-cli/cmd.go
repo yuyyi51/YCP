@@ -6,6 +6,7 @@ import (
 	"code.int-2.me/yuyyi51/YCP/utils"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -63,6 +64,11 @@ func createApp() *cli.App {
 				Usage: "set a loss rate in sending packets(0-100)",
 				Value: 0,
 			},
+			&cli.BoolFlag{
+				Name:  "tcp",
+				Usage: "use tcp to transfer, used to compare with YCP",
+				Value: false,
+			},
 		},
 		Action: appAction,
 	}
@@ -79,6 +85,7 @@ func appAction(c *cli.Context) error {
 	output := c.String("output")
 	pprofPort := c.Int("pprof_port")
 	loss := c.Int("loss")
+	tcp := c.Bool("tcp")
 	if pprofPort != 0 {
 		go func() {
 			logger.Debug("%v", http.ListenAndServe(fmt.Sprintf("localhost:%d", pprofPort), nil))
@@ -87,23 +94,52 @@ func appAction(c *cli.Context) error {
 
 	s := bufio.NewScanner(os.Stdin)
 
+	if !tcp {
+
+	}
+
 	var session *YCP.Session
-	if client {
-		var err error
-		session, err = YCP.Dial(address, port, logger)
-		if err != nil {
-			logger.Fatal("client dial error: %v", err)
+	var conn net.Conn
+	if !tcp {
+		if client {
+			var err error
+			session, err = YCP.Dial(address, port, logger)
+			if err != nil {
+				logger.Fatal("client dial error: %v", err)
+			}
+			session.SetLossRate(loss)
+			conn = session
+		} else {
+			address := fmt.Sprintf("%s:%d", address, port)
+			server := YCP.NewServer(address, logger)
+			err := server.Listen()
+			if err != nil {
+				logger.Fatal("server listen error: %v", err)
+			}
+			session = server.Accept()
+			session.SetLossRate(loss)
+			conn = session
 		}
-		session.SetLossRate(loss)
 	} else {
-		address := fmt.Sprintf("%s:%d", address, port)
-		server := YCP.NewServer(address, logger)
-		err := server.Listen()
-		if err != nil {
-			logger.Fatal("server listen error: %v", err)
+		if client {
+			con, err := net.Dial("tcp", fmt.Sprintf("%s:%d", address, port))
+			if err != nil {
+				logger.Fatal("client dial error: %v", err)
+			}
+			conn = con
+		} else {
+			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
+			if err != nil {
+				logger.Fatal("server listen error: %v", err)
+			}
+			con, err := listener.Accept()
+			if err != nil {
+				if err != nil {
+					logger.Fatal("server accept error: %v", err)
+				}
+			}
+			conn = con
 		}
-		session = server.Accept()
-		session.SetLossRate(loss)
 	}
 
 	// read routine
@@ -113,7 +149,7 @@ func appAction(c *cli.Context) error {
 				total := 0
 				buffer := make([]byte, 1000)
 				//fmt.Printf("reading data\n")
-				n, _ := session.Read(buffer)
+				n, _ := conn.Read(buffer)
 				total += n
 				if n != 0 {
 					logger.Info("%s", buffer)
@@ -132,7 +168,7 @@ func appAction(c *cli.Context) error {
 			record := utils.NewCostTimer()
 			for {
 				buffer := make([]byte, 10240) // 10KB
-				n, err := session.Read(buffer)
+				n, err := conn.Read(buffer)
 				if err != nil {
 					logger.Error("read from session error: %v", err)
 					break
@@ -144,7 +180,11 @@ func appAction(c *cli.Context) error {
 					record.Reset()
 					dataTrans := float64(1024 * 10000)
 					bandwidth := dataTrans / cost * 1000 / 1024 // KB
-					logger.Info("read %d data now, bandwidth: %.2fKB/s", total, bandwidth)
+					if session != nil {
+						logger.Info("read %d data now, bandwidth: %.2fKB/s, rtt: %s", total, bandwidth, session.GetRtt())
+					} else {
+						logger.Info("read %d data now, bandwidth: %.2fKB/s", total, bandwidth)
+					}
 					counter -= 1024 * 10000
 				}
 				_, err = writer.Write(buffer[:n])
@@ -170,7 +210,7 @@ func appAction(c *cli.Context) error {
 			s.Scan()
 			message := s.Text()
 			fmt.Printf("get input\n")
-			_, _ = session.Write([]byte(message))
+			_, _ = conn.Write([]byte(message))
 		}
 	} else {
 		fs, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0755)
@@ -190,7 +230,7 @@ func appAction(c *cli.Context) error {
 				break
 			}
 			readTotal += n
-			m, err := session.Write(buffer[:n])
+			m, err := conn.Write(buffer[:n])
 			if err != nil {
 				logger.Error("write info session error: %v", err)
 				break
@@ -202,7 +242,11 @@ func appAction(c *cli.Context) error {
 				record.Reset()
 				dataTrans := float64(1024 * 10000)
 				bandwidth := dataTrans / cost * 1000 / 1024 // KB
-				logger.Info("write %d data now, read %d, bandwidth: %.2fKB/s", total, readTotal, bandwidth)
+				if session != nil {
+					logger.Info("write %d data now, read %d, bandwidth: %.2fKB/s, rtt: %s", total, readTotal, bandwidth, session.GetRtt())
+				} else {
+					logger.Info("write %d data now, read %d, bandwidth: %.2fKB/s", total, readTotal, bandwidth)
+				}
 				counter -= 1024 * 10000
 			}
 		}

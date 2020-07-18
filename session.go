@@ -69,7 +69,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.L
 		closeSignal:     make(chan struct{}, 1),
 		dataSignal:      make(chan struct{}, 1),
 		readSignal:      make(chan struct{}, 1),
-		congestion:      internal.NewRenoAlgorithm(),
+		congestion:      internal.NewRenoAlgorithm(logger),
 		readingMux:      new(sync.RWMutex),
 		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
@@ -495,6 +495,10 @@ func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {
 
 func (sess *Session) SetLossRate(loss int) {
 	sess.lossRate = loss
+}
+
+func (sess *Session) GetRtt() time.Duration {
+	return sess.rttStat.SmoothRtt()
 }
 
 type ackManager struct {
