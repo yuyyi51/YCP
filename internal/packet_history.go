@@ -26,6 +26,7 @@ type PacketHistoryItem struct {
 	sentTime        time.Time
 	rtoTime         time.Time
 	queuedRto       bool
+	fastRetrans     int
 }
 
 type AckInfo struct {
@@ -96,6 +97,11 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo 
 			}
 			ackedPackets = append(ackedPackets, newlyAcked)
 			delete(history.itemMap, i)
+			for j := range history.itemMap {
+				if j < i {
+					history.itemMap[j].fastRetrans++
+				}
+			}
 		}
 	}
 	return ackedPackets
@@ -117,6 +123,25 @@ func (history *PacketHistory) FindTimeoutPacket() []packet.Packet {
 	needRetransmit := make([]packet.Packet, 0)
 	for i, pkt := range history.itemMap {
 		if !pkt.queuedRto && pkt.rtoTime.Before(time.Now()) {
+			needRetransmit = append(needRetransmit, pkt.packet)
+			pkt.queuedRto = true
+			if pkt.retransmittable {
+				history.bytesLost += int64(pkt.packet.Size())
+			} else {
+				// not retransmittable packet, remove from history
+				delete(history.itemMap, i)
+			}
+		}
+	}
+	return needRetransmit
+}
+
+func (history *PacketHistory) FindFastRetransmitPacket() []packet.Packet {
+	history.mapMux.Lock()
+	defer history.mapMux.Unlock()
+	needRetransmit := make([]packet.Packet, 0)
+	for i, pkt := range history.itemMap {
+		if !pkt.queuedRto && pkt.fastRetrans >= packet.FastTransmitCount {
 			needRetransmit = append(needRetransmit, pkt.packet)
 			pkt.queuedRto = true
 			if pkt.retransmittable {

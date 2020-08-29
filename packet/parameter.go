@@ -15,4 +15,5 @@ const (
 	PacketHeader           = 20
 	Ipv4PayloadSize        = MTU - Ipv4Header - UdpHeader
 	Ipv6PayloadSize        = MTU - Ipv6Header - UdpHeader
+	FastTransmitCount      = 3
 )

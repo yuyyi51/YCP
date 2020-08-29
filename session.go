@@ -254,9 +254,16 @@ func (sess *Session) sendPackets() {
 	packets := make([]internal.PacketInfo, 0)
 
 	// send retransmission first
+	// timeout packets
 	rtoPkts := sess.history.FindTimeoutPacket()
 	sess.retransmissionQueue = append(sess.retransmissionQueue, rtoPkts...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(rtoPkts))
+	sess.logger.Debug("%s find rto packets %v", sess, logPacketSeq(rtoPkts))
+	// fast retransmit packets
+	fastRetransPkts := sess.history.FindFastRetransmitPacket()
+	sess.retransmissionQueue = append(sess.retransmissionQueue, fastRetransPkts...)
+	sess.congestion.OnPacketsLost(internal.PacketsToInfo(fastRetransPkts))
+	sess.logger.Debug("%s find fast retransmit packets %v", sess, logPacketSeq(fastRetransPkts))
 	retransNum := 0
 	newNum := 0
 	ackNum := 0
@@ -411,6 +418,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		sess.congestion.OnPacketsAck(ackInfos)
 		sess.rttStat.Update(minRtt)
 		sess.logger.Debug("lastedtRtt: %s, smoothRtt: %s, rto: %s\n", minRtt, sess.rttStat.SmoothRtt(), sess.rttStat.Rto())
+
 	}
 	return nil
 }
@@ -602,4 +610,12 @@ func min(a, b uint64) uint64 {
 	} else {
 		return b
 	}
+}
+
+func logPacketSeq(pkts []packet.Packet) []uint64 {
+	seqs := make([]uint64, 0, len(pkts))
+	for i := range pkts {
+		seqs = append(seqs, pkts[i].Seq)
+	}
+	return seqs
 }
