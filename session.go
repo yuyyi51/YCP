@@ -54,6 +54,7 @@ type Session struct {
 
 	lossRate    int
 	closeLocal  bool
+	finSent     bool
 	closeRemote bool
 }
 
@@ -178,6 +179,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 
 func (sess *Session) Close() error {
 	sess.closeLocal = true
+	sess.SignalClose()
 	return nil
 }
 
@@ -207,6 +209,9 @@ func (sess *Session) String() string {
 
 func (sess *Session) run() {
 	sendTimer := time.NewTimer(packet.SessionSendInterval)
+	closeTimer := time.NewTimer(time.Hour * 24 * 3650)
+	closeSet := false
+loop:
 	for {
 		select {
 		case pkt := <-sess.receivedPackets:
@@ -220,10 +225,20 @@ func (sess *Session) run() {
 			//fmt.Printf("sendTimer fired\n")
 			//sess.sendData()
 			sess.sendPackets()
+			if sess.finSent && sess.closeRemote && !closeSet {
+				sess.logger.Debug("%s ready to exit", sess)
+				if !closeTimer.Stop() {
+					<-closeTimer.C
+				}
+				closeTimer.Reset(time.Second * 10)
+				closeSet = true
+			}
 			sendTimer.Reset(packet.SessionSendInterval)
-		case <-sess.closeSignal:
+		case <-closeTimer.C:
+			break loop
 		}
 	}
+	sess.logger.Info("%s exit main cycle", sess)
 }
 
 func (sess *Session) createAckFrame() *packet.AckFrame {
@@ -398,11 +413,10 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		if !ok {
 			return fmt.Errorf("convert Frame to DataFrame error")
 		}
-		if len(dataFrame.Data) == 0 {
-			sess.logger.Notice("droped dataFrame for have no data")
-			break
-		}
 		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data, dataFrame.Fin)
+		if dataFrame.Fin == true {
+			sess.closeRemote = true
+		}
 		sess.SignalRead()
 	//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
 	case packet.AckFrameCommand:
@@ -459,10 +473,17 @@ func (sess *Session) SignalAck() {
 	}
 }
 
+func (sess *Session) SignalClose() {
+	select {
+	case sess.closeSignal <- struct{}{}:
+	default:
+	}
+}
+
 func (sess *Session) haveDataToSend() bool {
 	sess.sessMux.RLock()
 	defer sess.sessMux.RUnlock()
-	return sess.writeBufferLen > 0
+	return sess.writeBufferLen > 0 || (sess.closeLocal && !sess.finSent)
 }
 
 func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
@@ -481,6 +502,7 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 	fin := false
 	if sess.closeLocal && sess.writeBufferLen == 0 {
 		fin = true
+		sess.finSent = true
 	}
 	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset, fin)
 	sess.nextDataOffset += uint64(dataSize)

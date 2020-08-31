@@ -27,6 +27,7 @@ type PacketHistoryItem struct {
 	rtoTime         time.Time
 	queuedRto       bool
 	fastRetrans     int
+	isFin           bool
 }
 
 type AckInfo struct {
