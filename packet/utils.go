@@ -4,6 +4,13 @@ import (
 	"encoding/binary"
 )
 
+func writeBool(b []byte, offset int, v bool) int {
+	if v {
+		return writeUint8(b, offset, 1)
+	}
+	return writeUint8(b, offset, 0)
+}
+
 func writeUint8(b []byte, offset int, v uint8) int {
 	b[offset] = byte(v)
 	return offset + 1
@@ -27,6 +34,14 @@ func writeUint64(b []byte, offset int, v uint64) int {
 func writeBytes(b []byte, offset int, v []byte) int {
 	copy(b[offset:], v[:])
 	return offset + len(v)
+}
+
+func readBool(b []byte, offset int) (bool, int) {
+	v := b[offset]
+	if v == 0 {
+		return false, offset + 1
+	}
+	return true, offset + 1
 }
 
 func readUint8(b []byte, offset int) (uint8, int) {

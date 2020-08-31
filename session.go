@@ -7,6 +7,7 @@ import (
 	"code.int-2.me/yuyyi51/YCP/utils"
 	"container/list"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"sync"
@@ -51,7 +52,9 @@ type Session struct {
 	logger              *utils.Logger
 	retransmissionQueue []packet.Packet
 
-	lossRate int
+	lossRate    int
+	closeLocal  bool
+	closeRemote bool
 }
 
 func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.Logger) *Session {
@@ -100,7 +103,11 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 		return len(b), nil
 	}
 	for {
-		data := sess.dataManager.PopData()
+		data, fin := sess.dataManager.PopData()
+		if fin {
+			err = io.EOF
+			break
+		}
 		if remain >= len(data) {
 			copy(b[offset:], data)
 			offset += len(data)
@@ -120,8 +127,8 @@ func (sess *Session) Read(b []byte) (n int, err error) {
 			break
 		}
 	}
-	sess.logger.Debug("Read data done, offset: %d", offset)
-	return offset, nil
+	sess.logger.Debug("Read data done, offset: %d, err %v", offset, err)
+	return offset, err
 }
 
 func (sess *Session) Write(b []byte) (n int, err error) {
@@ -170,6 +177,7 @@ func (sess *Session) Write(b []byte) (n int, err error) {
 }
 
 func (sess *Session) Close() error {
+	sess.closeLocal = true
 	return nil
 }
 
@@ -349,7 +357,7 @@ func (sess *Session) createPacket(maxDataSize int) packet.Packet {
 	if size > remainPayload-packet.DataFrameHeaderSize {
 		size = remainPayload - packet.DataFrameHeaderSize
 	}
-	if size > 0 {
+	if size > 0 || sess.closeLocal {
 		dataFrame, _ := sess.popDataFrame(size)
 		if dataFrame != nil {
 			pkt.AddFrame(dataFrame)
@@ -394,7 +402,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 			sess.logger.Notice("droped dataFrame for have no data")
 			break
 		}
-		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data)
+		sess.dataManager.AddDataRange(dataFrame.Offset, dataFrame.Offset+uint64(len(dataFrame.Data))-1, dataFrame.Data, dataFrame.Fin)
 		sess.SignalRead()
 	//fmt.Printf("printint data ranges : %s\n", sess.dataManager.PrintDataRanges())
 	case packet.AckFrameCommand:
@@ -470,9 +478,13 @@ func (sess *Session) popDataFrame(size int) (*packet.DataFrame, int) {
 	remain := sess.writeBufferLen
 	sess.SignalWrite()
 	sess.sessMux.Unlock()
-	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset)
+	fin := false
+	if sess.closeLocal && sess.writeBufferLen == 0 {
+		fin = true
+	}
+	dataFrame := packet.CreateDataFrame(data, sess.nextDataOffset, fin)
 	sess.nextDataOffset += uint64(dataSize)
-	sess.logger.Debug("popDataFrame Size: %d, dataSize: %d, nextDataOffset: %d, remain: %d", size, dataSize, sess.nextDataOffset, remain)
+	sess.logger.Debug("popDataFrame Size: %d, dataSize: %d, nextDataOffset: %d, remain: %d, fin: %v", size, dataSize, sess.nextDataOffset, remain, fin)
 	return dataFrame, remain
 }
 

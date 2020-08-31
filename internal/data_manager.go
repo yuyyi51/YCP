@@ -13,16 +13,18 @@ type DataManager struct {
 	minOffset uint64
 	logger    *utils.Logger
 	dataMux   *sync.RWMutex
+	fin       bool
 }
 
 type dataRange struct {
 	left  uint64
 	right uint64
 	data  []byte
+	fin   bool
 }
 
 func (ran dataRange) String() string {
-	return fmt.Sprintf("[%d,%d|%d]", ran.left, ran.right, len(ran.data))
+	return fmt.Sprintf("[%d,%d|%d, %v]", ran.left, ran.right, len(ran.data), ran.fin)
 }
 
 func NewDataManager(logger *utils.Logger) *DataManager {
@@ -42,9 +44,12 @@ func (manager *DataManager) PrintDataRanges() string {
 	return buffer.String()
 }
 
-func (manager *DataManager) PopData() []byte {
+func (manager *DataManager) PopData() ([]byte, bool) {
 	manager.dataMux.RLock()
 	defer manager.dataMux.RUnlock()
+	if manager.fin {
+		return nil, true
+	}
 	buffer := bytes.Buffer{}
 	cur := manager.rangeList.Front()
 	curr := cur
@@ -56,16 +61,17 @@ func (manager *DataManager) PopData() []byte {
 			manager.logger.Debug("pop range %s\n", curRange)
 			//fmt.Printf("pop range %s, data %s\n", curRange, hex.EncodeToString(curRange.data))
 			manager.minOffset = curRange.right + 1
+			manager.fin = curRange.fin
 			manager.rangeList.Remove(cur)
 			//fmt.Printf("remove newRange %s\n", cur.Value.(dataRange))
 		}
 	}
 	manager.logger.Debug("new min offset: %d", manager.minOffset)
 	//fmt.Printf("new min offset: %d\n", manager.minOffset)
-	return buffer.Bytes()
+	return buffer.Bytes(), false
 }
 
-func (manager *DataManager) AddDataRange(left, right uint64, data []byte) {
+func (manager *DataManager) AddDataRange(left, right uint64, data []byte, fin bool) {
 	manager.dataMux.Lock()
 	defer manager.dataMux.Unlock()
 	if manager.minOffset > right {
@@ -75,6 +81,7 @@ func (manager *DataManager) AddDataRange(left, right uint64, data []byte) {
 		left:  left,
 		right: right,
 		data:  make([]byte, len(data)),
+		fin:   fin,
 	}
 	copy(currentRange.data, data)
 	if manager.rangeList.Back() == nil {
@@ -95,15 +102,18 @@ func (manager *DataManager) AddDataRange(left, right uint64, data []byte) {
 					right: curRange.left - 1,
 					data:  currentRange.data[:curRange.left-currentRange.left],
 				}
+				currentRange.data = currentRange.data[curRange.left-currentRange.left:]
+				currentRange.left = curRange.left
 				manager.rangeList.InsertBefore(newRange, cur)
 				manager.logger.Trace("insert newRange2 %s, \n%s", newRange, newRange.data)
 				//fmt.Printf("insert newRange2 %s, %s\n", newRange, hex.EncodeToString(newRange.data))
-				break
-			} else if currentRange.right > curRange.right {
+			}
+			if currentRange.right > curRange.right {
 				newRange := dataRange{
 					left:  curRange.right + 1,
 					right: currentRange.right,
 					data:  currentRange.data[curRange.right+1-currentRange.left:],
+					fin:   currentRange.fin,
 				}
 				currentRange = newRange
 			}

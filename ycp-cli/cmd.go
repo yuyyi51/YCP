@@ -171,6 +171,7 @@ func appAction(c *cli.Context) error {
 				n, err := conn.Read(buffer)
 				if err != nil {
 					logger.Error("read from session error: %v", err)
+					_ = conn.Close()
 					break
 				}
 				total += n
@@ -227,6 +228,7 @@ func appAction(c *cli.Context) error {
 			n, err := reader.Read(buffer)
 			if err != nil {
 				logger.Error("read from file %s error: %v", file, err)
+				_ = conn.Close()
 				break
 			}
 			readTotal += n

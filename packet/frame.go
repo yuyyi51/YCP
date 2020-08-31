@@ -14,6 +14,7 @@ const (
 
 	DataFrameCommand = 1
 	AckFrameCommand  = 2
+	RstFrameCommand  = 3
 )
 
 type Frame interface {
