@@ -2,6 +2,7 @@ package YCP
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
+	"code.int-2.me/yuyyi51/YCP/utils"
 	"code.int-2.me/yuyyi51/ylog"
 	"fmt"
 	"math/rand"
@@ -28,6 +29,7 @@ func Dial(host string, port int, logger ylog.ILogger) (*Session, error) {
 
 func ListenPacket(session *Session) {
 	buffer := make([]byte, 1500)
+	ct := utils.NewCostTimer()
 	for {
 		n, _, err := session.conn.ReadFrom(buffer)
 		//n, err := listener.Read(buffer)
@@ -37,7 +39,9 @@ func ListenPacket(session *Session) {
 		}
 		//fmt.Printf("server read Packet from %s, length [%d]\n", addr, n)
 		p, _ := packet.Unpack(buffer[:n])
+		ct.Reset()
 		session.receivedPackets <- p
+		session.logger.Debug("client read Packet conv %d, seq %d, into channel cost %s", p.Conv, p.Seq, ct.Cost())
 		//session.handlePacket(p, addr)
 	}
 	fmt.Println("listener exit")

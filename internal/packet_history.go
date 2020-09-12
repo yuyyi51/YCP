@@ -8,16 +8,17 @@ import (
 )
 
 type PacketHistory struct {
-	itemMap      map[uint64]*PacketHistoryItem
-	mapMux       *sync.RWMutex
-	bytesSent    int64
-	inflight     int64
-	bytesAck     int64
-	bytesLost    int64
-	logger       ylog.ILogger
-	currentRound uint64
-	lastRoundSeq uint64
-	maxSeq       uint64
+	itemMap       map[uint64]*PacketHistoryItem
+	mapMux        *sync.RWMutex
+	bytesSent     int64
+	inflight      int64
+	bytesAck      int64
+	bytesLost     int64
+	logger        ylog.ILogger
+	currentRound  uint64
+	lastRoundSeq  uint64
+	maxSeq        uint64
+	lowestTracked uint64
 }
 
 type PacketHistoryItem struct {
@@ -48,8 +49,6 @@ func NewPacketHistory(logger ylog.ILogger) *PacketHistory {
 }
 
 func (history *PacketHistory) SendPacket(pkt packet.Packet, rto time.Duration) {
-	history.mapMux.Lock()
-	defer history.mapMux.Unlock()
 	item := &PacketHistoryItem{
 		seq:             pkt.Seq,
 		retransmittable: pkt.IsRetransmittable(),
@@ -66,8 +65,6 @@ func (history *PacketHistory) SendPacket(pkt packet.Packet, rto time.Duration) {
 }
 
 func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet, rto time.Duration, retransmitFor uint64) {
-	history.mapMux.Lock()
-	defer history.mapMux.Unlock()
 	item := &PacketHistoryItem{
 		seq:             pkt.Seq,
 		retransmittable: pkt.IsRetransmittable(),
@@ -85,12 +82,16 @@ func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet, rto time.D
 }
 
 func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo {
-	history.mapMux.Lock()
-	defer history.mapMux.Unlock()
 	ackedPackets := make([]PacketInfo, 0)
 	for _, ran := range ranges {
+		if ran.Right < history.lowestTracked {
+			continue
+		}
 		for i := ran.Left; i <= ran.Right; i++ {
-			_, ok := history.itemMap[i]
+			if i < history.lowestTracked {
+				continue
+			}
+			item, ok := history.itemMap[i]
 			if !ok {
 				continue
 			}
@@ -100,21 +101,22 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo 
 				history.lastRoundSeq = history.maxSeq + 1
 				history.currentRound++
 			}
-			if history.itemMap[i].packet.IsRetransmittable() && !history.itemMap[i].queuedRto {
-				history.bytesAck += int64(history.itemMap[i].packet.Size())
+			if item.packet.IsRetransmittable() && !history.itemMap[i].queuedRto {
+				history.bytesAck += int64(item.packet.Size())
 			}
 			newlyAcked := PacketInfo{
 				Seq:             i,
-				Rtt:             time.Since(history.itemMap[i].sentTime),
-				Retransmittable: history.itemMap[i].retransmittable,
-				Size:            history.itemMap[i].packet.Size(),
-				Round:           history.itemMap[i].round,
+				Rtt:             time.Since(item.sentTime),
+				Retransmittable: item.retransmittable,
+				Size:            item.packet.Size(),
+				Round:           item.round,
 			}
 			ackedPackets = append(ackedPackets, newlyAcked)
 			delete(history.itemMap, i)
-			for j := range history.itemMap {
-				if j < i {
-					history.itemMap[j].fastRetrans++
+			for j := history.lowestTracked; j < i; j++ {
+				tem, ok := history.itemMap[j]
+				if ok {
+					tem.fastRetrans++
 				}
 			}
 		}
@@ -132,8 +134,6 @@ func (history *PacketHistory) IsInflight(seq uint64) bool {
 }
 
 func (history *PacketHistory) FindTimeoutPacket() []*PacketHistoryItem {
-	history.mapMux.Lock()
-	defer history.mapMux.Unlock()
 	needRetransmit := make([]*PacketHistoryItem, 0)
 	for i, pkt := range history.itemMap {
 		if !pkt.queuedRto && pkt.rtoTime.Before(time.Now()) {
@@ -151,8 +151,6 @@ func (history *PacketHistory) FindTimeoutPacket() []*PacketHistoryItem {
 }
 
 func (history *PacketHistory) FindFastRetransmitPacket() []*PacketHistoryItem {
-	history.mapMux.Lock()
-	defer history.mapMux.Unlock()
 	needRetransmit := make([]*PacketHistoryItem, 0)
 	for i, pkt := range history.itemMap {
 		if !pkt.queuedRto && pkt.fastRetrans >= packet.FastTransmitCount {
@@ -167,6 +165,19 @@ func (history *PacketHistory) FindFastRetransmitPacket() []*PacketHistoryItem {
 		}
 	}
 	return needRetransmit
+}
+
+func (history *PacketHistory) UpdateLowestTracked() {
+	if len(history.itemMap) == 0 {
+		return
+	}
+	for i := history.lowestTracked; ; i++ {
+		_, ok := history.itemMap[i]
+		if ok {
+			history.lowestTracked = i
+			break
+		}
+	}
 }
 
 func ExtractPktFromItems(items []*PacketHistoryItem) []packet.Packet {

@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"github.com/urfave/cli/v2"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"sync"
+	"time"
 )
 
 func createApp() *cli.App {
@@ -107,6 +109,7 @@ func appAction(c *cli.Context) error {
 			logger.Debug("%v", http.ListenAndServe(fmt.Sprintf("localhost:%d", pprofPort), nil))
 		}()
 	}
+	rand.Seed(time.Now().UnixNano())
 
 	s := bufio.NewScanner(os.Stdin)
 

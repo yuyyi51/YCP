@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"code.int-2.me/yuyyi51/YCP/internal"
 	"code.int-2.me/yuyyi51/YCP/packet"
+	"code.int-2.me/yuyyi51/YCP/utils"
 	"code.int-2.me/yuyyi51/ylog"
 	"container/list"
 	"fmt"
@@ -20,6 +21,7 @@ type Session struct {
 	conn            net.PacketConn
 	remoteAddr      net.Addr
 	receivedPackets chan *packet.Packet
+	sentPackets     chan *packet.Packet
 	sessMux         *sync.RWMutex
 
 	writeBuffer    []byte
@@ -78,9 +80,21 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger ylog.ILo
 		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
 		logger:          logger,
+		sentPackets:     make(chan *packet.Packet, 500),
 	}
 	go session.run()
+	go session.senderFunc()
 	return session
+}
+
+func (sess *Session) senderFunc() {
+	for {
+		pkt, ok := <-sess.sentPackets
+		if !ok {
+			break
+		}
+		_, _ = sess.conn.WriteTo(pkt.Pack(), sess.remoteAddr)
+	}
 }
 
 func (sess *Session) Read(b []byte) (n int, err error) {
@@ -221,9 +235,21 @@ loop:
 				// send ack for the first packet soon to probe the rtt
 				sess.sendAck()
 			}
+		default:
+		}
+
+		select {
+		case pkt := <-sess.receivedPackets:
+			sess.handlePacket(pkt)
+			if !sess.receiveFirstPacket {
+				sess.receiveFirstPacket = true
+				// send ack for the first packet soon to probe the rtt
+				sess.sendAck()
+			}
 		case <-sendTimer.C:
 			//fmt.Printf("sendTimer fired\n")
 			//sess.sendData()
+			ct := utils.NewCostTimer()
 			sess.sendPackets()
 			if sess.finSent && sess.closeRemote && !closeSet {
 				sess.logger.Debug("%s ready to exit", sess)
@@ -233,11 +259,17 @@ loop:
 				closeTimer.Reset(time.Second * 10)
 				closeSet = true
 			}
-			sendTimer.Reset(packet.SessionSendInterval)
+			if packet.SessionSendInterval*2 > sess.GetRtt() {
+				sendTimer.Reset(sess.GetRtt() / 2)
+			} else {
+				sendTimer.Reset(packet.SessionSendInterval)
+			}
+			sess.logger.Debug("sendPackets cost %s", ct.Cost())
 		case <-closeTimer.C:
 			break loop
 		}
 	}
+	close(sess.sentPackets)
 	sess.logger.Info("%s exit main cycle", sess)
 }
 
@@ -276,8 +308,11 @@ func (sess *Session) sendPackets() {
 	canSend = cwd - inflight
 	packets := make([]internal.PacketInfo, 0)
 
+	ct0 := utils.NewCostTimer()
+	findLostCost := time.Duration(0)
 	// send retransmission first
 	// timeout packets
+	ct0.Reset()
 	rtoPkts := sess.history.FindTimeoutPacket()
 	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(rtoPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(rtoPkts))
@@ -287,6 +322,8 @@ func (sess *Session) sendPackets() {
 	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(fastRetransPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(fastRetransPkts))
 	sess.logger.Debug("%s find fast retransmit packets %v", sess, internal.LogPacketSeq(fastRetransPkts))
+	findLostCost = ct0.Cost()
+	sess.logger.Debug("find lost cost %s", findLostCost)
 	retransNum := 0
 	newNum := 0
 	ackNum := 0
@@ -317,8 +354,13 @@ func (sess *Session) sendPackets() {
 		retransNum++
 	}
 	// then send new data
+	createCost := time.Duration(0)
+	sendCost := time.Duration(0)
+	ct := utils.NewCostTimer()
 	for canSend > 0 && sess.haveDataToSend() {
+		ct.Reset()
 		pkt := sess.createPacket(int(canSend))
+		createCost += ct.Cost()
 		if len(pkt.Frames) == 0 {
 			break
 		}
@@ -326,14 +368,17 @@ func (sess *Session) sendPackets() {
 			Seq:  pkt.Seq,
 			Size: pkt.Size(),
 		}
+		ct.Reset()
 		packets = append(packets, pktInfo)
 		err := sess.sendPacket(pkt)
+		sendCost += ct.Cost()
 		if err != nil {
 			sess.logger.Error("send packet error: %v", err)
 		}
 		canSend -= int64(pkt.Size())
 		newNum++
 	}
+	sess.logger.Debug("create cost %s, send cost %s, find lost cost %s", createCost, sendCost, findLostCost)
 	// finally see whether need send ack only packet
 	if sess.needAck {
 		pkt := sess.createAckOnlyPacket()
@@ -350,6 +395,7 @@ func (sess *Session) sendPackets() {
 		}
 		ackNum++
 	}
+	sess.history.UpdateLowestTracked()
 	if len(packets) != 0 {
 		sess.congestion.OnPacketsSend(packets)
 		sess.logger.Debug("sendPackets done, cwd: %d, inFlight: %d, retransNum: %d, newNum: %d, ackNum: %d", sess.congestion.GetCongestionWindow(), sess.history.Inflight(), retransNum, newNum, ackNum)
@@ -439,6 +485,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		}
 		sess.congestion.OnPacketsAck(ackInfos)
 		sess.rttStat.Update(minRtt)
+		sess.history.UpdateLowestTracked()
 		sess.logger.Debug("lastedtRtt: %s, smoothRtt: %s, rto: %s\n", minRtt, sess.rttStat.SmoothRtt(), sess.rttStat.Rto())
 
 	}
@@ -514,13 +561,17 @@ func (sess *Session) sendPacket(p packet.Packet) error {
 	sess.history.SendPacket(p, sess.rttStat.Rto())
 	sess.nextPktSeq++
 	sess.logger.Debug("--> %s send packet %s", sess, p)
-	rand.Seed(time.Now().UnixNano())
 	if rand.Uint32()%100 < uint32(sess.lossRate) {
 		sess.logger.Debug("%s lost packet Seq: %d", sess, p.Seq)
 		return nil
 	}
-	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
-	return err
+	select {
+	case sess.sentPackets <- &p:
+	default:
+		sess.logger.Debug("%s sentPackets is full", sess)
+	}
+
+	return nil
 }
 
 func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64) error {
