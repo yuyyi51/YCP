@@ -2,14 +2,14 @@ package YCP
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"fmt"
 	"math/rand"
 	"net"
 	"time"
 )
 
-func Dial(host string, port int, logger *utils.Logger) (*Session, error) {
+func Dial(host string, port int, logger ylog.ILogger) (*Session, error) {
 	address := fmt.Sprintf("%s:%d", host, port)
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {

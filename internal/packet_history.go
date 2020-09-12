@@ -2,7 +2,7 @@ package internal
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"sync"
 	"time"
 )
@@ -15,7 +15,7 @@ type PacketHistory struct {
 	inflight  int64
 	bytesAck  int64
 	bytesLost int64
-	logger    *utils.Logger
+	logger    ylog.ILogger
 }
 
 type PacketHistoryItem struct {
@@ -36,7 +36,7 @@ type AckInfo struct {
 	Retransmittable bool
 }
 
-func NewPacketHistory(logger *utils.Logger) *PacketHistory {
+func NewPacketHistory(logger ylog.ILogger) *PacketHistory {
 	return &PacketHistory{
 		itemMap: map[uint64]*PacketHistoryItem{},
 		mapMux:  new(sync.RWMutex),

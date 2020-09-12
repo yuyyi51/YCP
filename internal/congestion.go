@@ -2,7 +2,7 @@ package internal
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"time"
 )
 
@@ -48,10 +48,10 @@ type RenoAlgorithm struct {
 	round              int64
 	lastRoundPkt       int64
 	maxSent            int64
-	logger             *utils.Logger
+	logger             ylog.ILogger
 }
 
-func NewRenoAlgorithm(logger *utils.Logger) *RenoAlgorithm {
+func NewRenoAlgorithm(logger ylog.ILogger) *RenoAlgorithm {
 	return &RenoAlgorithm{
 		cwnd:               100 * packet.Ipv4PayloadSize,
 		status:             SlowStart,

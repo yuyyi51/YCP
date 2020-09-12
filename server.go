@@ -2,7 +2,7 @@ package YCP
 
 import (
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"fmt"
 	"net"
 	"sync"
@@ -14,10 +14,10 @@ type Server struct {
 	sessionMap    map[uint32]*Session
 	sessionMapMux *sync.RWMutex
 	sessionChan   chan *Session
-	logger        *utils.Logger
+	logger        ylog.ILogger
 }
 
-func NewServer(address string, logger *utils.Logger) *Server {
+func NewServer(address string, logger ylog.ILogger) *Server {
 	return &Server{
 		address:       address,
 		sessionMap:    make(map[uint32]*Session),

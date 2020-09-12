@@ -1,3 +1,7 @@
+code.int-2.me/yuyyi51/ylog v0.0.1 h1:d2OanZSdu0ppU8WXA+r5H2Mpj4tKooG09GEyuesKVpo=
+code.int-2.me/yuyyi51/ylog v0.0.1/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
+code.int-2.me/yuyyi51/ylog v0.0.2 h1:ZI4RoI8dzY+mpllH4A96WT06MWarYrHSL95z2zN7//g=
+code.int-2.me/yuyyi51/ylog v0.0.2/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d h1:U+s90UTSYgptZMwQh2aRr3LuazLJIa+Pg3Kc1ylSYVY=
 github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=

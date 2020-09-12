@@ -2,7 +2,7 @@ package internal
 
 import (
 	"bytes"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"container/list"
 	"fmt"
 	"sync"
@@ -11,7 +11,7 @@ import (
 type DataManager struct {
 	rangeList *list.List
 	minOffset uint64
-	logger    *utils.Logger
+	logger    ylog.ILogger
 	dataMux   *sync.RWMutex
 	fin       bool
 }
@@ -27,7 +27,7 @@ func (ran dataRange) String() string {
 	return fmt.Sprintf("[%d,%d|%d, %v]", ran.left, ran.right, len(ran.data), ran.fin)
 }
 
-func NewDataManager(logger *utils.Logger) *DataManager {
+func NewDataManager(logger ylog.ILogger) *DataManager {
 	return &DataManager{
 		rangeList: list.New(),
 		logger:    logger,

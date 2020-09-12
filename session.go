@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"code.int-2.me/yuyyi51/YCP/internal"
 	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"container/list"
 	"fmt"
 	"io"
@@ -49,7 +49,7 @@ type Session struct {
 
 	rttStat internal.RttStat
 
-	logger              *utils.Logger
+	logger              ylog.ILogger
 	retransmissionQueue []packet.Packet
 
 	lossRate    int
@@ -58,7 +58,7 @@ type Session struct {
 	closeRemote bool
 }
 
-func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger *utils.Logger) *Session {
+func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger ylog.ILogger) *Session {
 	session := &Session{
 		conv:            conv,
 		conn:            conn,

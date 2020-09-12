@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"code.int-2.me/yuyyi51/YCP"
 	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/ylog"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -40,6 +42,11 @@ func createApp() *cli.App {
 				Aliases: []string{"l"},
 				Usage:   "log level, could be trace, debug, info, notice, warn, error, fatal, none",
 				Value:   "info",
+			},
+			&cli.StringFlag{
+				Name:  "log_prefix",
+				Usage: "log prefix",
+				Value: "ycp",
 			},
 			&cli.StringFlag{
 				Name:    "file",
@@ -80,7 +87,16 @@ func appAction(c *cli.Context) error {
 	address := c.String("address")
 	client := c.Bool("client")
 	logLevel := c.String("log_level")
-	logger := utils.NewLogger(logLevel, 2)
+	logPrefix := c.String("log_prefix")
+	logger, err := ylog.NewFileLogger("log", logPrefix, ylog.StringToLogLevel(logLevel), 0)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	consoleLogger, err := ylog.NewConsoleLogger(ylog.LogLevelInfo, 0)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	logger.AddLogChain(consoleLogger)
 	file := c.String("file")
 	output := c.String("output")
 	pprofPort := c.Int("pprof_port")
