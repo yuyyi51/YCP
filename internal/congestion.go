@@ -18,17 +18,19 @@ type PacketInfo struct {
 	Size            int
 	Rtt             time.Duration
 	Retransmittable bool
+	Round           uint64
 }
 
-func PacketToInfo(pkt packet.Packet) PacketInfo {
+func PacketToInfo(pkt *PacketHistoryItem) PacketInfo {
 	return PacketInfo{
-		Seq:             pkt.Seq,
-		Size:            pkt.Size(),
-		Retransmittable: pkt.IsRetransmittable(),
+		Seq:             pkt.seq,
+		Size:            pkt.packet.Size(),
+		Retransmittable: pkt.retransmittable,
+		Round:           pkt.round,
 	}
 }
 
-func PacketsToInfo(pkts []packet.Packet) []PacketInfo {
+func PacketsToInfo(pkts []*PacketHistoryItem) []PacketInfo {
 	infos := make([]PacketInfo, 0, len(pkts))
 	for _, pkt := range pkts {
 		infos = append(infos, PacketToInfo(pkt))
@@ -46,9 +48,10 @@ type RenoAlgorithm struct {
 	status             int
 	slowStartThreshold int64
 	round              int64
-	lastRoundPkt       int64
 	maxSent            int64
 	logger             ylog.ILogger
+	largestRound       uint64
+	lastDecreaseSeq    int64
 }
 
 func NewRenoAlgorithm(logger ylog.ILogger) *RenoAlgorithm {
@@ -57,6 +60,7 @@ func NewRenoAlgorithm(logger ylog.ILogger) *RenoAlgorithm {
 		status:             SlowStart,
 		slowStartThreshold: 200 * packet.Ipv4PayloadSize,
 		logger:             logger,
+		lastDecreaseSeq:    -1,
 	}
 }
 
@@ -71,10 +75,9 @@ func (r *RenoAlgorithm) OnPacketsSend(pkts []PacketInfo) {
 func (r *RenoAlgorithm) OnPacketsAck(pkts []PacketInfo) {
 	newRound := false
 	for _, pkt := range pkts {
-		if int64(pkt.Seq) > r.lastRoundPkt {
-			// new round
+		if pkt.Round > r.largestRound {
 			newRound = true
-			r.lastRoundPkt = r.maxSent
+			r.largestRound = pkt.Round
 		}
 	}
 
@@ -88,24 +91,26 @@ func (r *RenoAlgorithm) OnPacketsAck(pkts []PacketInfo) {
 			r.cwnd += packet.Ipv4PayloadSize
 		}
 	}
-	r.logger.Debug("Reno OnPacketsAck cwnd: %d", r.cwnd)
+	r.logger.Debug("Reno OnPacketsAck cwnd: %d, round: %d", r.cwnd, r.largestRound)
 }
 
 func (r *RenoAlgorithm) OnPacketsLost(pkts []PacketInfo) {
 	if len(pkts) != 0 {
 		lostSeqs := make([]uint64, 0, len(pkts))
+		maxLostSeq := int64(0)
 		for _, pkt := range pkts {
-			//r.cwnd -= int64(pkt.Size)
 			lostSeqs = append(lostSeqs, pkt.Seq)
+			if int64(pkt.Seq) > maxLostSeq {
+				maxLostSeq = int64(pkt.Seq)
+			}
 		}
 		r.logger.Debug("Reno OnPacketsLost num: %d, %v", len(lostSeqs), lostSeqs)
-		r.cwnd -= packet.Ipv4PayloadSize
-		if r.cwnd < 100*packet.Ipv4PayloadSize {
-			r.cwnd = 100 * packet.Ipv4PayloadSize
+		if maxLostSeq > r.lastDecreaseSeq {
+			r.lastDecreaseSeq = -1
+			r.slowStartThreshold = r.cwnd >> 1
+			r.cwnd = r.slowStartThreshold
+			r.status = SlowStart
 		}
-		//r.slowStartThreshold = r.cwnd >> 1
-		//r.cwnd = 100 * packet.Ipv4PayloadSize
-		//r.status = SlowStart
 		r.logger.Debug("Reno OnPacketsLost cwnd: %d", r.cwnd)
 	}
 }

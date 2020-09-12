@@ -10,6 +10,7 @@ type Packet struct {
 	Seq    uint64
 	Rcv    uint64
 	Frames []Frame
+	Round  uint64
 }
 
 func (p Packet) String() string {

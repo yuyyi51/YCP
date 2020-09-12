@@ -279,14 +279,14 @@ func (sess *Session) sendPackets() {
 	// send retransmission first
 	// timeout packets
 	rtoPkts := sess.history.FindTimeoutPacket()
-	sess.retransmissionQueue = append(sess.retransmissionQueue, rtoPkts...)
+	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(rtoPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(rtoPkts))
-	sess.logger.Debug("%s find rto packets %v", sess, logPacketSeq(rtoPkts))
+	sess.logger.Debug("%s find rto packets %v", sess, internal.LogPacketSeq(rtoPkts))
 	// fast retransmit packets
 	fastRetransPkts := sess.history.FindFastRetransmitPacket()
-	sess.retransmissionQueue = append(sess.retransmissionQueue, fastRetransPkts...)
+	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(fastRetransPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(fastRetransPkts))
-	sess.logger.Debug("%s find fast retransmit packets %v", sess, logPacketSeq(fastRetransPkts))
+	sess.logger.Debug("%s find fast retransmit packets %v", sess, internal.LogPacketSeq(fastRetransPkts))
 	retransNum := 0
 	newNum := 0
 	ackNum := 0
@@ -644,12 +644,4 @@ func min(a, b uint64) uint64 {
 	} else {
 		return b
 	}
-}
-
-func logPacketSeq(pkts []packet.Packet) []uint64 {
-	seqs := make([]uint64, 0, len(pkts))
-	for i := range pkts {
-		seqs = append(seqs, pkts[i].Seq)
-	}
-	return seqs
 }

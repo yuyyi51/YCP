@@ -8,14 +8,16 @@ import (
 )
 
 type PacketHistory struct {
-	itemMap   map[uint64]*PacketHistoryItem
-	mapMux    *sync.RWMutex
-	maxUna    uint64
-	bytesSent int64
-	inflight  int64
-	bytesAck  int64
-	bytesLost int64
-	logger    ylog.ILogger
+	itemMap      map[uint64]*PacketHistoryItem
+	mapMux       *sync.RWMutex
+	bytesSent    int64
+	inflight     int64
+	bytesAck     int64
+	bytesLost    int64
+	logger       ylog.ILogger
+	currentRound uint64
+	lastRoundSeq uint64
+	maxSeq       uint64
 }
 
 type PacketHistoryItem struct {
@@ -28,6 +30,7 @@ type PacketHistoryItem struct {
 	queuedRto       bool
 	fastRetrans     int
 	isFin           bool
+	round           uint64
 }
 
 type AckInfo struct {
@@ -53,7 +56,9 @@ func (history *PacketHistory) SendPacket(pkt packet.Packet, rto time.Duration) {
 		packet:          pkt,
 		sentTime:        time.Now(),
 		rtoTime:         time.Now().Add(rto),
+		round:           history.currentRound,
 	}
+	history.maxSeq = pkt.Seq
 	history.itemMap[pkt.Seq] = item
 	if pkt.IsRetransmittable() {
 		history.bytesSent += int64(pkt.Size())
@@ -69,7 +74,9 @@ func (history *PacketHistory) SendRetransmitPacket(pkt packet.Packet, rto time.D
 		packet:          pkt,
 		sentTime:        time.Now(),
 		rtoTime:         time.Now().Add(rto),
+		round:           history.currentRound,
 	}
+	history.maxSeq = pkt.Seq
 	history.itemMap[pkt.Seq] = item
 	if pkt.IsRetransmittable() {
 		history.bytesSent += int64(pkt.Size())
@@ -87,6 +94,12 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo 
 			if !ok {
 				continue
 			}
+			if i > history.lastRoundSeq {
+				// new round
+				history.logger.Debug("new round [%d], start with %d, lastRoundSeq: %d, newly acked: %d", history.currentRound+1, history.maxSeq+1, history.currentRound, i)
+				history.lastRoundSeq = history.maxSeq + 1
+				history.currentRound++
+			}
 			if history.itemMap[i].packet.IsRetransmittable() && !history.itemMap[i].queuedRto {
 				history.bytesAck += int64(history.itemMap[i].packet.Size())
 			}
@@ -95,6 +108,7 @@ func (history *PacketHistory) AckPackets(ranges []packet.AckRange) []PacketInfo 
 				Rtt:             time.Since(history.itemMap[i].sentTime),
 				Retransmittable: history.itemMap[i].retransmittable,
 				Size:            history.itemMap[i].packet.Size(),
+				Round:           history.itemMap[i].round,
 			}
 			ackedPackets = append(ackedPackets, newlyAcked)
 			delete(history.itemMap, i)
@@ -114,17 +128,16 @@ func (history *PacketHistory) Inflight() int64 {
 
 func (history *PacketHistory) IsInflight(seq uint64) bool {
 	_, ok := history.itemMap[seq]
-	history.logger.Debug("IsInflight called, itemMap length %d, seq %d", len(history.itemMap), seq)
 	return ok
 }
 
-func (history *PacketHistory) FindTimeoutPacket() []packet.Packet {
+func (history *PacketHistory) FindTimeoutPacket() []*PacketHistoryItem {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
-	needRetransmit := make([]packet.Packet, 0)
+	needRetransmit := make([]*PacketHistoryItem, 0)
 	for i, pkt := range history.itemMap {
 		if !pkt.queuedRto && pkt.rtoTime.Before(time.Now()) {
-			needRetransmit = append(needRetransmit, pkt.packet)
+			needRetransmit = append(needRetransmit, pkt)
 			pkt.queuedRto = true
 			if pkt.retransmittable {
 				history.bytesLost += int64(pkt.packet.Size())
@@ -137,13 +150,13 @@ func (history *PacketHistory) FindTimeoutPacket() []packet.Packet {
 	return needRetransmit
 }
 
-func (history *PacketHistory) FindFastRetransmitPacket() []packet.Packet {
+func (history *PacketHistory) FindFastRetransmitPacket() []*PacketHistoryItem {
 	history.mapMux.Lock()
 	defer history.mapMux.Unlock()
-	needRetransmit := make([]packet.Packet, 0)
+	needRetransmit := make([]*PacketHistoryItem, 0)
 	for i, pkt := range history.itemMap {
 		if !pkt.queuedRto && pkt.fastRetrans >= packet.FastTransmitCount {
-			needRetransmit = append(needRetransmit, pkt.packet)
+			needRetransmit = append(needRetransmit, pkt)
 			pkt.queuedRto = true
 			if pkt.retransmittable {
 				history.bytesLost += int64(pkt.packet.Size())
@@ -154,4 +167,20 @@ func (history *PacketHistory) FindFastRetransmitPacket() []packet.Packet {
 		}
 	}
 	return needRetransmit
+}
+
+func ExtractPktFromItems(items []*PacketHistoryItem) []packet.Packet {
+	res := make([]packet.Packet, 0, len(items))
+	for _, item := range items {
+		res = append(res, item.packet)
+	}
+	return res
+}
+
+func LogPacketSeq(pkts []*PacketHistoryItem) []uint64 {
+	seqs := make([]uint64, 0, len(pkts))
+	for i := range pkts {
+		seqs = append(seqs, pkts[i].seq)
+	}
+	return seqs
 }
