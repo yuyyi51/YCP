@@ -11,6 +11,10 @@ type CongestionAlgorithm interface {
 	OnPacketsAck([]PacketInfo)
 	OnPacketsLost([]PacketInfo)
 	GetCongestionWindow() int64
+	UpdateRtt(duration time.Duration)
+	UpdatePacingThreshold()
+	PacingSend(size int64) bool
+	PacingBytes() int64
 }
 
 type PacketInfo struct {
@@ -52,6 +56,8 @@ type RenoAlgorithm struct {
 	logger             ylog.ILogger
 	largestRound       uint64
 	lastDecreaseSeq    int64
+	rtt                time.Duration
+	pacingSender       *PacingSender
 }
 
 func NewRenoAlgorithm(logger ylog.ILogger) *RenoAlgorithm {
@@ -61,7 +67,14 @@ func NewRenoAlgorithm(logger ylog.ILogger) *RenoAlgorithm {
 		slowStartThreshold: 200 * packet.Ipv4PayloadSize,
 		logger:             logger,
 		lastDecreaseSeq:    -1,
+		rtt:                200 * time.Millisecond,
 	}
+}
+
+func NewRenoAlgorithmWithPacing(logger ylog.ILogger) *RenoAlgorithm {
+	reno := NewRenoAlgorithm(logger)
+	reno.pacingSender = NewPacingSender(reno.CalcSendRate, logger)
+	return reno
 }
 
 func (r *RenoAlgorithm) OnPacketsSend(pkts []PacketInfo) {
@@ -117,4 +130,29 @@ func (r *RenoAlgorithm) OnPacketsLost(pkts []PacketInfo) {
 
 func (r *RenoAlgorithm) GetCongestionWindow() int64 {
 	return r.cwnd
+}
+
+func (r *RenoAlgorithm) UpdateRtt(rtt time.Duration) {
+	r.rtt = rtt
+}
+
+func (r *RenoAlgorithm) UpdatePacingThreshold() {
+	if r.pacingSender != nil {
+		r.pacingSender.UpdatePacingBytes()
+	}
+}
+
+func (r *RenoAlgorithm) PacingSend(size int64) bool {
+	if r.pacingSender != nil {
+		return r.pacingSender.PacingSend(size)
+	}
+	return true
+}
+
+func (r *RenoAlgorithm) CalcSendRate() float32 {
+	return float32(r.cwnd) * float32(time.Second) / float32(r.rtt)
+}
+
+func (r *RenoAlgorithm) PacingBytes() int64 {
+	return r.PacingBytes()
 }

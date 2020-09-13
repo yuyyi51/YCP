@@ -75,7 +75,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger ylog.ILo
 		closeSignal:     make(chan struct{}, 1),
 		dataSignal:      make(chan struct{}, 1),
 		readSignal:      make(chan struct{}, 1),
-		congestion:      internal.NewRenoAlgorithm(logger),
+		congestion:      internal.NewRenoAlgorithmWithPacing(logger),
 		readingMux:      new(sync.RWMutex),
 		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
@@ -259,12 +259,13 @@ loop:
 				closeTimer.Reset(time.Second * 10)
 				closeSet = true
 			}
-			if packet.SessionSendInterval*2 > sess.GetRtt() {
+			//sendTimer.Reset(packet.SessionSendInterval)
+			if packet.SessionSendInterval*2 > sess.GetRtt() && sess.GetRtt() != 0 {
 				sendTimer.Reset(sess.GetRtt() / 2)
 			} else {
 				sendTimer.Reset(packet.SessionSendInterval)
 			}
-			sess.logger.Debug("sendPackets cost %s", ct.Cost())
+			sess.logger.Debug("sendPackets cost %s, rtt %s", ct.Cost(), sess.GetRtt())
 		case <-closeTimer.C:
 			break loop
 		}
@@ -308,11 +309,8 @@ func (sess *Session) sendPackets() {
 	canSend = cwd - inflight
 	packets := make([]internal.PacketInfo, 0)
 
-	ct0 := utils.NewCostTimer()
-	findLostCost := time.Duration(0)
 	// send retransmission first
 	// timeout packets
-	ct0.Reset()
 	rtoPkts := sess.history.FindTimeoutPacket()
 	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(rtoPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(rtoPkts))
@@ -322,12 +320,13 @@ func (sess *Session) sendPackets() {
 	sess.retransmissionQueue = append(sess.retransmissionQueue, internal.ExtractPktFromItems(fastRetransPkts)...)
 	sess.congestion.OnPacketsLost(internal.PacketsToInfo(fastRetransPkts))
 	sess.logger.Debug("%s find fast retransmit packets %v", sess, internal.LogPacketSeq(fastRetransPkts))
-	findLostCost = ct0.Cost()
-	sess.logger.Debug("find lost cost %s", findLostCost)
+	sess.congestion.UpdatePacingThreshold()
+
 	retransNum := 0
 	newNum := 0
 	ackNum := 0
-	for canSend > 0 && len(sess.retransmissionQueue) > 0 {
+	canPacing := true
+	for canSend > 0 && canPacing && len(sess.retransmissionQueue) > 0 {
 		rtoPkt := sess.retransmissionQueue[0]
 		sess.retransmissionQueue = sess.retransmissionQueue[1:]
 		if !sess.history.IsInflight(rtoPkt.Seq) {
@@ -351,13 +350,14 @@ func (sess *Session) sendPackets() {
 			Size: retrans.Size(),
 		})
 		canSend -= int64(retrans.Size())
+		canPacing = sess.congestion.PacingSend(int64(retrans.Size()))
 		retransNum++
 	}
 	// then send new data
 	createCost := time.Duration(0)
 	sendCost := time.Duration(0)
 	ct := utils.NewCostTimer()
-	for canSend > 0 && sess.haveDataToSend() {
+	for canSend > 0 && canPacing && sess.haveDataToSend() {
 		ct.Reset()
 		pkt := sess.createPacket(int(canSend))
 		createCost += ct.Cost()
@@ -376,9 +376,10 @@ func (sess *Session) sendPackets() {
 			sess.logger.Error("send packet error: %v", err)
 		}
 		canSend -= int64(pkt.Size())
+		canPacing = sess.congestion.PacingSend(int64(pkt.Size()))
 		newNum++
 	}
-	sess.logger.Debug("create cost %s, send cost %s, find lost cost %s", createCost, sendCost, findLostCost)
+	sess.logger.Debug("create cost %s, send cost %s", createCost, sendCost)
 	// finally see whether need send ack only packet
 	if sess.needAck {
 		pkt := sess.createAckOnlyPacket()
@@ -398,7 +399,13 @@ func (sess *Session) sendPackets() {
 	sess.history.UpdateLowestTracked()
 	if len(packets) != 0 {
 		sess.congestion.OnPacketsSend(packets)
-		sess.logger.Debug("sendPackets done, cwd: %d, inFlight: %d, retransNum: %d, newNum: %d, ackNum: %d", sess.congestion.GetCongestionWindow(), sess.history.Inflight(), retransNum, newNum, ackNum)
+		sess.logger.Debug("sendPackets done, total: %d, cwd: %d, inFlight: %d, limitedPacing: %v, retransNum: %d, newNum: %d, ackNum: %d", len(packets),
+			sess.congestion.GetCongestionWindow(),
+			sess.history.Inflight(),
+			!canPacing,
+			retransNum,
+			newNum,
+			ackNum)
 	}
 
 }
@@ -485,6 +492,7 @@ func (sess *Session) handleFrame(frame packet.Frame) error {
 		}
 		sess.congestion.OnPacketsAck(ackInfos)
 		sess.rttStat.Update(minRtt)
+		sess.congestion.UpdateRtt(sess.GetRtt())
 		sess.history.UpdateLowestTracked()
 		sess.logger.Debug("lastedtRtt: %s, smoothRtt: %s, rto: %s\n", minRtt, sess.rttStat.SmoothRtt(), sess.rttStat.Rto())
 
