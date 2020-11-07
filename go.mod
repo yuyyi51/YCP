@@ -1,4 +1,4 @@
-module code.int-2.me/yuyyi51/YCP
+module github.com/yuyyi51/YCP
 
 go 1.14
 
