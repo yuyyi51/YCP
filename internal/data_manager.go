@@ -2,7 +2,7 @@ package internal
 
 import (
 	"bytes"
-	"code.int-2.me/yuyyi51/ylog"
+	"github.com/yuyyi51/ylog"
 	"container/list"
 	"fmt"
 	"sync"

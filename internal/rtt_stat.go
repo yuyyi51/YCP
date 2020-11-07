@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"code.int-2.me/yuyyi51/YCP/packet"
+	"github.com/yuyyi51/YCP/packet"
 	"time"
 )
 

@@ -2,10 +2,10 @@ cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMT
 cloud.google.com/go v0.31.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
 cloud.google.com/go v0.34.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
 cloud.google.com/go v0.37.0/go.mod h1:TS1dMSSfndXH133OKGwekG838Om/cQT0BUHV3HcBgoo=
-code.int-2.me/yuyyi51/ylog v0.0.1 h1:d2OanZSdu0ppU8WXA+r5H2Mpj4tKooG09GEyuesKVpo=
-code.int-2.me/yuyyi51/ylog v0.0.1/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
-code.int-2.me/yuyyi51/ylog v0.0.2 h1:ZI4RoI8dzY+mpllH4A96WT06MWarYrHSL95z2zN7//g=
-code.int-2.me/yuyyi51/ylog v0.0.2/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
+github.com/yuyyi51/ylog v0.0.1 h1:d2OanZSdu0ppU8WXA+r5H2Mpj4tKooG09GEyuesKVpo=
+github.com/yuyyi51/ylog v0.0.1/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
+github.com/yuyyi51/ylog v0.0.2 h1:ZI4RoI8dzY+mpllH4A96WT06MWarYrHSL95z2zN7//g=
+github.com/yuyyi51/ylog v0.0.2/go.mod h1:qHSi1Ie29yZ8e3q/AxwO0uEZHnFq6it4rBOZert67tg=
 dmitri.shuralyov.com/app/changes v0.0.0-20180602232624-0a106ad413e3/go.mod h1:Yl+fi1br7+Rr3LqpNJf1/uxUdtRUV+Tnj0o93V2B9MU=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 dmitri.shuralyov.com/html/belt v0.0.0-20180602232347-f7d459c86be0/go.mod h1:JLBrvjyP0v+ecvNYvCpyZgu5/xkfAUhi6wJj28eUfSU=

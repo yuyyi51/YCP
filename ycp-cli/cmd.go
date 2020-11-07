@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
-	"code.int-2.me/yuyyi51/YCP"
-	"code.int-2.me/yuyyi51/YCP/utils"
-	"code.int-2.me/yuyyi51/ylog"
+	"github.com/yuyyi51/YCP"
+	"github.com/yuyyi51/YCP/utils"
+	"github.com/yuyyi51/ylog"
 	"context"
 	"crypto/tls"
 	"fmt"

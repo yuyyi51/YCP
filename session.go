@@ -2,10 +2,10 @@ package YCP
 
 import (
 	"bytes"
-	"code.int-2.me/yuyyi51/YCP/internal"
-	"code.int-2.me/yuyyi51/YCP/packet"
-	"code.int-2.me/yuyyi51/YCP/utils"
-	"code.int-2.me/yuyyi51/ylog"
+	"github.com/yuyyi51/YCP/internal"
+	"github.com/yuyyi51/YCP/packet"
+	"github.com/yuyyi51/YCP/utils"
+	"github.com/yuyyi51/ylog"
 	"container/list"
 	"fmt"
 	"io"
