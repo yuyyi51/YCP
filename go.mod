@@ -3,7 +3,7 @@ module code.int-2.me/yuyyi51/YCP
 go 1.14
 
 require (
-	code.int-2.me/yuyyi51/ylog v0.0.2
+	github.com/yuyyi51/ylog v0.0.2
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/golang/protobuf v1.4.3 // indirect
 	github.com/hajimehoshi/ebiten v1.12.0 // indirect
