@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"code.int-2.me/yuyyi51/YCP"
 	"code.int-2.me/yuyyi51/YCP/utils"
+	"code.int-2.me/yuyyi51/quic-go"
 	"code.int-2.me/yuyyi51/ylog"
 	"fmt"
 	"github.com/urfave/cli/v2"
@@ -78,6 +79,11 @@ func createApp() *cli.App {
 				Usage: "use tcp to transfer, used to compare with YCP",
 				Value: false,
 			},
+			&cli.StringFlag{
+				Name:  "protocol",
+				Usage: "protocol to transfer",
+				Value: "tcp",
+			},
 		},
 		Action: appAction,
 	}
@@ -104,6 +110,7 @@ func appAction(c *cli.Context) error {
 	pprofPort := c.Int("pprof_port")
 	loss := c.Int("loss")
 	tcp := c.Bool("tcp")
+	protocol := c.String("protocol")
 	if pprofPort != 0 {
 		go func() {
 			logger.Debug("%v", http.ListenAndServe(fmt.Sprintf("localhost:%d", pprofPort), nil))
@@ -113,13 +120,30 @@ func appAction(c *cli.Context) error {
 
 	s := bufio.NewScanner(os.Stdin)
 
-	if !tcp {
-
-	}
-
 	var session *YCP.Session
 	var conn net.Conn
-	if !tcp {
+	switch protocol {
+	case "tcp":
+		if client {
+			con, err := net.Dial("tcp", fmt.Sprintf("%s:%d", address, port))
+			if err != nil {
+				logger.Fatal("client dial error: %v", err)
+			}
+			conn = con
+		} else {
+			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
+			if err != nil {
+				logger.Fatal("server listen error: %v", err)
+			}
+			con, err := listener.Accept()
+			if err != nil {
+				if err != nil {
+					logger.Fatal("server accept error: %v", err)
+				}
+			}
+			conn = con
+		}
+	case "ycp":
 		if client {
 			var err error
 			session, err = YCP.Dial(address, port, logger)
@@ -139,25 +163,9 @@ func appAction(c *cli.Context) error {
 			session.SetLossRate(loss)
 			conn = session
 		}
-	} else {
+	case "quic":
 		if client {
-			con, err := net.Dial("tcp", fmt.Sprintf("%s:%d", address, port))
-			if err != nil {
-				logger.Fatal("client dial error: %v", err)
-			}
-			conn = con
-		} else {
-			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
-			if err != nil {
-				logger.Fatal("server listen error: %v", err)
-			}
-			con, err := listener.Accept()
-			if err != nil {
-				if err != nil {
-					logger.Fatal("server accept error: %v", err)
-				}
-			}
-			conn = con
+
 		}
 	}
 

@@ -75,7 +75,7 @@ func NewSession(conn net.PacketConn, addr net.Addr, conv uint32, logger ylog.ILo
 		closeSignal:     make(chan struct{}, 1),
 		dataSignal:      make(chan struct{}, 1),
 		readSignal:      make(chan struct{}, 1),
-		congestion:      internal.NewRenoAlgorithmWithPacing(logger),
+		congestion:      internal.NewBbrSender(logger),
 		readingMux:      new(sync.RWMutex),
 		history:         internal.NewPacketHistory(logger),
 		ackChan:         make(chan struct{}, 1),
@@ -259,12 +259,12 @@ loop:
 				closeTimer.Reset(time.Second * 10)
 				closeSet = true
 			}
-			//sendTimer.Reset(packet.SessionSendInterval)
-			if packet.SessionSendInterval*2 > sess.GetRtt() && sess.GetRtt() != 0 {
-				sendTimer.Reset(sess.GetRtt() / 2)
-			} else {
-				sendTimer.Reset(packet.SessionSendInterval)
-			}
+			sendTimer.Reset(packet.SessionSendInterval)
+			//if packet.SessionSendInterval*2 > sess.GetRtt() && sess.GetRtt() != 0 {
+			//	sendTimer.Reset(sess.GetRtt() / 2)
+			//} else {
+			//	sendTimer.Reset(packet.SessionSendInterval)
+			//}
 			sess.logger.Debug("sendPackets cost %s, rtt %s", ct.Cost(), sess.GetRtt())
 		case <-closeTimer.C:
 			break loop
@@ -346,8 +346,9 @@ func (sess *Session) sendPackets() {
 			sess.logger.Error("send packet error: %v", err)
 		}
 		packets = append(packets, internal.PacketInfo{
-			Seq:  retrans.Seq,
-			Size: retrans.Size(),
+			Seq:   retrans.Seq,
+			Size:  retrans.Size(),
+			Round: sess.history.CurrentRound(),
 		})
 		canSend -= int64(retrans.Size())
 		canPacing = sess.congestion.PacingSend(int64(retrans.Size()))
@@ -365,8 +366,9 @@ func (sess *Session) sendPackets() {
 			break
 		}
 		pktInfo := internal.PacketInfo{
-			Seq:  pkt.Seq,
-			Size: pkt.Size(),
+			Seq:   pkt.Seq,
+			Size:  pkt.Size(),
+			Round: sess.history.CurrentRound(),
 		}
 		ct.Reset()
 		packets = append(packets, pktInfo)
@@ -385,8 +387,9 @@ func (sess *Session) sendPackets() {
 		pkt := sess.createAckOnlyPacket()
 		if len(pkt.Frames) != 0 {
 			pktInfo := internal.PacketInfo{
-				Seq:  pkt.Seq,
-				Size: pkt.Size(),
+				Seq:   pkt.Seq,
+				Size:  pkt.Size(),
+				Round: sess.history.CurrentRound(),
 			}
 			packets = append(packets, pktInfo)
 			err := sess.sendPacket(pkt)
@@ -586,8 +589,12 @@ func (sess *Session) sendRetransmitPacket(p packet.Packet, retransmitFor uint64)
 	sess.history.SendRetransmitPacket(p, sess.rttStat.Rto(), retransmitFor)
 	sess.nextPktSeq++
 	sess.logger.Debug("%s send retransmit packet Seq: %d, Size: %d, retransmit for %d", sess, p.Seq, p.Size(), retransmitFor)
-	_, err := sess.conn.WriteTo(p.Pack(), sess.remoteAddr)
-	return err
+	select {
+	case sess.sentPackets <- &p:
+	default:
+		sess.logger.Info("%s sentPackets is full", sess)
+	}
+	return nil
 }
 
 func (sess *Session) ackPacket(seq uint64, rtt time.Duration) {

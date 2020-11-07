@@ -180,6 +180,10 @@ func (history *PacketHistory) UpdateLowestTracked() {
 	}
 }
 
+func (history *PacketHistory) CurrentRound() uint64 {
+	return history.currentRound
+}
+
 func ExtractPktFromItems(items []*PacketHistoryItem) []packet.Packet {
 	res := make([]packet.Packet, 0, len(items))
 	for _, item := range items {
