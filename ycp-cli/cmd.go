@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"code.int-2.me/yuyyi51/YCP"
 	"code.int-2.me/yuyyi51/YCP/utils"
-	"code.int-2.me/yuyyi51/quic-go"
 	"code.int-2.me/yuyyi51/ylog"
+	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"github.com/yuyyi51/quic-go"
 	"log"
 	"math/rand"
 	"net"
@@ -90,6 +92,11 @@ func createApp() *cli.App {
 	return app
 }
 
+type quicConn struct {
+	quic.Session
+	quic.Stream
+}
+
 func appAction(c *cli.Context) error {
 	port := c.Int("port")
 	address := c.String("address")
@@ -165,7 +172,33 @@ func appAction(c *cli.Context) error {
 		}
 	case "quic":
 		if client {
-
+			quicSession, err := quic.DialAddr(fmt.Sprintf("%s:%d", address, port), &tls.Config{InsecureSkipVerify: true}, nil)
+			if err != nil {
+				logger.Fatal("client dial error: %v", err)
+			}
+			quicStream, err := quicSession.OpenStream()
+			if err != nil {
+				logger.Fatal("client dial error: %v", err)
+			}
+			conn = quicConn{
+				Session: quicSession,
+				Stream:  quicStream,
+			}
+		} else {
+			address := fmt.Sprintf("%s:%d", address, port)
+			quicListener, err := quic.ListenAddr(address, &tls.Config{InsecureSkipVerify: true}, nil)
+			if err != nil {
+				logger.Fatal("server listen error: %v", err)
+			}
+			quicSession, err := quicListener.Accept(context.Background())
+			if err != nil {
+				logger.Fatal("server listen error: %v", err)
+			}
+			quicStream, err := quicSession.AcceptStream(context.Background())
+			conn = quicConn{
+				Session: quicSession,
+				Stream:  quicStream,
+			}
 		}
 	}
 
